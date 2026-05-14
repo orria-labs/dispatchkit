@@ -1,0 +1,51 @@
+{
+	"name": "@orria/dispatchkit",
+	"version": "0.0.0-test.0",
+	"description": "Lightweight CQRS-lite application framework and runtime toolkit for Bun.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"dispatchkit": "./dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "bun run clean && bun x tsc -p tsconfig.build.json && node ./scripts/postbuild.mjs && chmod +x dist/cli.js",
+		"prepack": "bun run build",
+		"test": "bun test ./test/runtime.test.ts"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/orria-labs/dispatchkit.git"
+	},
+	"homepage": "https://github.com/orria-labs/dispatchkit#readme",
+	"bugs": {
+		"url": "https://github.com/orria-labs/dispatchkit/issues"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"zod": "^4.4.3"
+	},
+	"dependencies": {
+		"dotenv": "^17.4.2"
+	},
+	"peerDependencies": {
+		"typescript": "^6.0.3",
+		"zod": "^4.4.3"
+	}
+}
