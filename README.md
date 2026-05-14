@@ -1,6 +1,12 @@
-# Dispatchkit (`@orria/dispatchkit`)
+<p align="center">
+  <img src="./docs/assets/logo.svg" width="256" alt="@orria/dispatchkit logo" />
+</p>
 
-Lightweight CQRS-lite runtime toolkit for Bun.
+<h1 align="center">Dispatchkit</h1>
+
+<p align="center">
+  <code>@orria/dispatchkit</code> — Lightweight CQRS-lite runtime toolkit for Bun.
+</p>
 
 ## Features
 
