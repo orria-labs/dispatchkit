@@ -127,7 +127,7 @@ function assertTransportNoCollisions(modules: DiscoveredTransport[]): void {
     const existing = keyToModule.get(module.key);
     if (existing) {
       throw new Error(
-        `XPR_DISCOVERY_TRANSPORT_COLLISION: Transport key "${module.key}" collides between "${existing.filePath}" (${existing.source}) and "${module.filePath}" (${module.source})`,
+        `DISPATCHKIT_DISCOVERY_TRANSPORT_COLLISION: Transport key "${module.key}" collides between "${existing.filePath}" (${existing.source}) and "${module.filePath}" (${module.source})`,
       );
     }
     keyToModule.set(module.key, module);

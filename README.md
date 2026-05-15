@@ -129,14 +129,24 @@ If `src/logger.ts` is missing, Dispatchkit uses a fallback `console`-based logge
 ```ts
 import { defineInfra } from "@orria/dispatchkit";
 
-export default defineInfra(() => ({
-  repo: {
-    get: (id: string) => ({ id }),
-  },
-}));
+export default defineInfra(async ({ config, logger }) => {
+  logger.info("infra init", { service: config.SERVICE_NAME });
+
+  return {
+    repo: {
+      get: (id: string) => ({ id }),
+    },
+  };
+});
 ```
 
-All infra module return objects are merged into `runtime.infra`.
+`defineInfra()` receives only `{ config, logger }`.
+
+Return behavior:
+
+- Plain objects from multiple infra modules are merged into `runtime.infra` by top-level keys.
+- Returning a non-plain object (for example a class instance like `PrismaClient`) is supported.
+- A non-plain infra result cannot be merged with other infra module results (runtime throws `DISPATCHKIT_INFRA_INVALID_RESULT`).
 
 ### 5) Transport modules
 
@@ -185,10 +195,17 @@ Runtime shape:
 - `getModuleCtx()` returns `{ config, logger, infra, bus }`
 - `getTransportCtx()` returns `{ config, logger, bus }`
 
+Factory/handler context matrix:
+
+- `defineLogger((config) => ...)` -> `config`
+- `defineInfra((ctx) => ...)` -> `{ config, logger }`
+- `defineTransport((ctx) => ...)` -> `{ config, logger, bus }`
+- `defineQuery/defineMutation/defineAction.handler(ctx)` -> `{ config, logger, infra, bus, input }`
+
 Invalid context access throws structured errors:
 
-- `XPR_CONTEXT_UNAVAILABLE`
-- `XPR_CONTEXT_FORBIDDEN`
+- `DISPATCHKIT_CONTEXT_UNAVAILABLE`
+- `DISPATCHKIT_CONTEXT_FORBIDDEN`
 
 ## CQRS Guards
 
@@ -198,7 +215,7 @@ Runtime enforces call chain restrictions:
 - `mutation` -> `query`, `mutation`
 - `action` -> `query`, `mutation`, `action`
 
-Invalid calls throw `XPR_CQRS_GUARD`.
+Invalid calls throw `DISPATCHKIT_CQRS_GUARD`.
 
 ## Discovery Rules
 

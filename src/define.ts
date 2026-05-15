@@ -37,7 +37,7 @@ function defineOperation<
   options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, TKind>,
 ): OperationDefinition<TKind, TInput, TReturn, TConfig, TInfra, TBus> {
   return {
-    __xprType: "operation",
+    __dispatchkitType: "operation",
     kind,
     input: options.input,
     return: options.return,
@@ -85,7 +85,7 @@ export function defineConfig<TSchema extends z.ZodTypeAny>(
   schema: TSchema,
 ): ConfigDefinition<TSchema> {
   return {
-    __xprType: "config",
+    __dispatchkitType: "config",
     schema,
   };
 }
@@ -94,21 +94,19 @@ export function defineLogger<TConfig = RuntimeConfigShape>(
   factory: LoggerDefinition<TConfig>["factory"],
 ): LoggerDefinition<TConfig> {
   return {
-    __xprType: "logger",
+    __dispatchkitType: "logger",
     factory,
   };
 }
 
 export function defineInfra<
   TConfig = RuntimeConfigShape,
-  TInfra = Record<string, unknown>,
-  TBus = RuntimeBusBase,
-  TResult extends Record<string, unknown> = Record<string, unknown>,
+  TResult = RuntimeInfraShape,
 >(
-  factory: InfraDefinition<TConfig, TInfra, TBus, TResult>["factory"],
-): InfraDefinition<TConfig, TInfra, TBus, TResult> {
+  factory: InfraDefinition<TConfig, TResult>["factory"],
+): InfraDefinition<TConfig, TResult> {
   return {
-    __xprType: "infra",
+    __dispatchkitType: "infra",
     factory,
   };
 }
@@ -122,7 +120,7 @@ export function defineTransport<
   options?: TransportDefinition<TConfig, TBus, TResult>["options"],
 ): TransportDefinition<TConfig, TBus, TResult> {
   return {
-    __xprType: "transport",
+    __dispatchkitType: "transport",
     factory,
     options,
   };

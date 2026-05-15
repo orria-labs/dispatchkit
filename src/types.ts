@@ -92,6 +92,11 @@ export interface ModuleContext<
   bus: TBus;
 }
 
+export interface InfraContext<TConfig = RuntimeConfigShape> {
+  config: TConfig;
+  logger: LoggerLike;
+}
+
 export interface TransportContext<
   TConfig = RuntimeConfigShape,
   TBus = RuntimeBus,
@@ -118,7 +123,7 @@ export interface OperationDefinition<
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
 > {
-  readonly __xprType: "operation";
+  readonly __dispatchkitType: "operation";
   readonly kind: TKind;
   readonly input?: TInputSchema;
   readonly return?: TReturnSchema;
@@ -140,23 +145,21 @@ export type OperationReturn<T> =
   : never;
 
 export interface ConfigDefinition<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
-  readonly __xprType: "config";
+  readonly __dispatchkitType: "config";
   readonly schema: TSchema;
 }
 
 export interface LoggerDefinition<TConfig = RuntimeConfigShape> {
-  readonly __xprType: "logger";
+  readonly __dispatchkitType: "logger";
   readonly factory: (config: TConfig) => { logger: LoggerLike; console: ConsoleLike };
 }
 
 export interface InfraDefinition<
   TConfig = RuntimeConfigShape,
-  TInfra = RuntimeInfraShape,
-  TBus = RuntimeBus,
-  TResult extends Record<string, unknown> = Record<string, unknown>,
+  TResult = RuntimeInfraShape,
 > {
-  readonly __xprType: "infra";
-  readonly factory: (ctx: ModuleContext<TConfig, TInfra, TBus>) => TResult | Promise<TResult>;
+  readonly __dispatchkitType: "infra";
+  readonly factory: (ctx: InfraContext<TConfig>) => TResult | Promise<TResult>;
 }
 
 export interface TransportDefinition<
@@ -164,7 +167,7 @@ export interface TransportDefinition<
   TBus = RuntimeBus,
   TResult = unknown,
 > {
-  readonly __xprType: "transport";
+  readonly __dispatchkitType: "transport";
   readonly factory: (ctx: TransportContext<TConfig, TBus>) => TResult | Promise<TResult>;
   readonly options?: TransportDefinitionOptions;
 }
@@ -212,7 +215,7 @@ export type UnionToIntersection<T> =
   : never;
 
 export type InferInfraModule<T> =
-  T extends InfraDefinition<any, any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
+  T extends InfraDefinition<any, any> ? Awaited<ReturnType<T["factory"]>> : never;
 
 export type InferTransportModule<T> =
   T extends TransportDefinition<any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;

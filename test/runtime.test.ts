@@ -28,10 +28,10 @@ function writeProjectFiles(rootDir: string, files: FileMap): void {
 }
 
 function createTempProject(files: FileMap): string {
-  const rootDir = mkdtempSync(join(tmpdir(), "xpr-test-"));
+  const rootDir = mkdtempSync(join(tmpdir(), "dispatchkit-test-"));
   writeProjectFiles(rootDir, {
     "package.json": JSON.stringify({
-      name: "xpr-test-service",
+      name: "dispatchkit-test-service",
       description: "runtime test",
       version: "1.2.3",
     }),
@@ -47,14 +47,14 @@ function createTempProject(files: FileMap): string {
   return rootDir;
 }
 
-function xprImportLine(): string {
+function dispatchkitImportLine(): string {
   return `import { defineAction, defineConfig, defineInfra, defineLogger, defineMutation, defineQuery, defineTransport, getModuleCtx, getTransportCtx } from ${JSON.stringify(runtimeImport)};`;
 }
 
 describe("logger", () => {
   it("mounts global console and supports fallback logger", async () => {
     const rootDir = createTempProject({
-      "src/modules/ping.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
     });
 
     try {
@@ -77,16 +77,16 @@ describe("logger", () => {
 describe("discovery", () => {
   it("finds valid files and keeps deterministic sort order", async () => {
     const rootDir = createTempProject({
-      "src/modules/widget/upsert.mutation.ts": `${xprImportLine()}\nexport default defineMutation({ handler: async () => ({}) });`,
-      "src/modules/widget/get.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({}) });`,
+      "src/modules/widget/upsert.mutation.ts": `${dispatchkitImportLine()}\nexport default defineMutation({ handler: async () => ({}) });`,
+      "src/modules/widget/get.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({}) });`,
       "src/modules/widget/internal.d.ts": "export {};",
       "src/modules/ignore.txt": "noop",
-      "src/infra/db/index.ts": `${xprImportLine()}\nexport default defineInfra(() => ({ db: {} }));`,
-      "src/infra/cache.ts": `${xprImportLine()}\nexport default defineInfra(() => ({ cache: {} }));`,
-      "src/infra/nested/skip.ts": `${xprImportLine()}\nexport default defineInfra(() => ({ skip: {} }));`,
-      "src/transport/http/index.ts": `${xprImportLine()}\nexport default defineTransport(() => ({ http: {} }));`,
-      "src/transport/worker.ts": `${xprImportLine()}\nexport default defineTransport(() => ({ worker: {} }));`,
-      "src/transport/nested/skip.ts": `${xprImportLine()}\nexport default defineTransport(() => ({ skip: {} }));`,
+      "src/infra/db/index.ts": `${dispatchkitImportLine()}\nexport default defineInfra(() => ({ db: {} }));`,
+      "src/infra/cache.ts": `${dispatchkitImportLine()}\nexport default defineInfra(() => ({ cache: {} }));`,
+      "src/infra/nested/skip.ts": `${dispatchkitImportLine()}\nexport default defineInfra(() => ({ skip: {} }));`,
+      "src/transport/http/index.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ http: {} }));`,
+      "src/transport/worker.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ worker: {} }));`,
+      "src/transport/nested/skip.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ skip: {} }));`,
     });
 
     try {
@@ -110,9 +110,9 @@ describe("discovery", () => {
 describe("generate runtime artifacts", () => {
   it("generates types without loading env-dependent runtime", async () => {
     const rootDir = createTempProject({
-      "src/config.ts": `${xprImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ SECRET_TOKEN: z.string().min(10) }));`,
-      "src/modules/widget/get.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
-      "src/transport/http.ts": `${xprImportLine()}\nexport default defineTransport(() => ({ ping: () => "pong" }));`,
+      "src/config.ts": `${dispatchkitImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ SECRET_TOKEN: z.string().min(10) }));`,
+      "src/modules/widget/get.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
+      "src/transport/http.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ ping: () => "pong" }));`,
     });
 
     try {
@@ -144,9 +144,9 @@ describe("generate runtime artifacts", () => {
 
   it("discovers defineTransport exported from infra without module execution", async () => {
     const rootDir = createTempProject({
-      "src/modules/ping.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
-      "src/infra/storage.ts": `${xprImportLine()}\nexport default defineInfra(() => ({ storage: { ready: true } }));`,
-      "src/infra/http.ts": `${xprImportLine()}\nconst transport = defineTransport(() => ({ ping: () => "pong" }));\nexport default transport;`,
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
+      "src/infra/storage.ts": `${dispatchkitImportLine()}\nexport default defineInfra(() => ({ storage: { ready: true } }));`,
+      "src/infra/http.ts": `${dispatchkitImportLine()}\nconst transport = defineTransport(() => ({ ping: () => "pong" }));\nexport default transport;`,
     });
 
     try {
@@ -183,13 +183,13 @@ describe("naming", () => {
 
   it("detects collisions after normalization", async () => {
     const rootDir = createTempProject({
-      "src/modules/widget-upsert.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => 1 });`,
-      "src/modules/widget/upsert.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => 2 });`,
+      "src/modules/widget-upsert.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => 1 });`,
+      "src/modules/widget/upsert.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => 2 });`,
     });
 
     try {
       await expect(discoverRuntimeFiles(join(rootDir, "src"))).rejects.toThrow(
-        "XPR_DISCOVERY_NAME_COLLISION",
+        "DISPATCHKIT_DISCOVERY_NAME_COLLISION",
       );
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
@@ -200,11 +200,11 @@ describe("naming", () => {
 describe("cqrs guards", () => {
   it("blocks query->mutation and mutation->action, allows valid chains", async () => {
     const rootDir = createTempProject({
-      "src/modules/base.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => 1 });`,
-      "src/modules/do.mutation.ts": `${xprImportLine()}\nexport default defineMutation({ handler: async (ctx) => ctx.bus.query.base({}) });`,
-      "src/modules/start.action.ts": `${xprImportLine()}\nexport default defineAction({ handler: async (ctx) => ctx.bus.mutation.do({}) });`,
-      "src/modules/forbidden-query.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async (ctx) => ctx.bus.mutation.do({}) });`,
-      "src/modules/forbidden-mutation.mutation.ts": `${xprImportLine()}\nexport default defineMutation({ handler: async (ctx) => ctx.bus.action.start({}) });`,
+      "src/modules/base.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => 1 });`,
+      "src/modules/do.mutation.ts": `${dispatchkitImportLine()}\nexport default defineMutation({ handler: async (ctx) => ctx.bus.query.base({}) });`,
+      "src/modules/start.action.ts": `${dispatchkitImportLine()}\nexport default defineAction({ handler: async (ctx) => ctx.bus.mutation.do({}) });`,
+      "src/modules/forbidden-query.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async (ctx) => ctx.bus.mutation.do({}) });`,
+      "src/modules/forbidden-mutation.mutation.ts": `${dispatchkitImportLine()}\nexport default defineMutation({ handler: async (ctx) => ctx.bus.action.start({}) });`,
     });
 
     try {
@@ -215,10 +215,10 @@ describe("cqrs guards", () => {
       const bus = runtime.bus as any;
       await expect(bus.action.start({})).resolves.toBe(1);
       await expect(bus.query.forbiddenQuery({})).rejects.toThrow(
-        "XPR_CQRS_GUARD",
+        "DISPATCHKIT_CQRS_GUARD",
       );
       await expect(bus.mutation.forbiddenMutation({})).rejects.toThrow(
-        "XPR_CQRS_GUARD",
+        "DISPATCHKIT_CQRS_GUARD",
       );
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
@@ -229,7 +229,7 @@ describe("cqrs guards", () => {
 describe("validation", () => {
   it("validates input/return and supports $unsafe", async () => {
     const rootDir = createTempProject({
-      "src/modules/check.mutation.ts": `${xprImportLine()}\nimport { z } from "zod";\nexport default defineMutation({\n  input: z.object({ value: z.number() }),\n  return: z.object({ value: z.number() }),\n  handler: async (ctx) => ctx.input.value === 13 ? ({ value: "bad" } as unknown as { value: number }) : ({ value: ctx.input.value })\n});`,
+      "src/modules/check.mutation.ts": `${dispatchkitImportLine()}\nimport { z } from "zod";\nexport default defineMutation({\n  input: z.object({ value: z.number() }),\n  return: z.object({ value: z.number() }),\n  handler: async (ctx) => ctx.input.value === 13 ? ({ value: "bad" } as unknown as { value: number }) : ({ value: ctx.input.value })\n});`,
     });
 
     try {
@@ -260,12 +260,12 @@ describe("validation", () => {
 describe("transport context allowlist", () => {
   it("supports routes shorthand and top-level getTransportCtx during transport import", async () => {
     const rootDir = createTempProject({
-      "src/routes/index.ts": `${xprImportLine()}
+      "src/routes/index.ts": `${dispatchkitImportLine()}
 export const bootCtxName = getTransportCtx().config.SERVICE_NAME;
 export function readRouteCtxName() {
   return getTransportCtx().config.SERVICE_NAME;
 }`,
-      "src/transport/http.ts": `${xprImportLine()}
+      "src/transport/http.ts": `${dispatchkitImportLine()}
 import { bootCtxName, readRouteCtxName } from "../routes/index.ts";
 import { readForbiddenName } from "../lib/ctx.ts";
 
@@ -279,11 +279,11 @@ export default defineTransport(
     allowGetTransportCtxFrom: ["routes"],
   },
 );`,
-      "src/lib/ctx.ts": `${xprImportLine()}
+      "src/lib/ctx.ts": `${dispatchkitImportLine()}
 export function readForbiddenName() {
   return getTransportCtx().config.SERVICE_NAME;
 }`,
-      "src/modules/ping.query.ts": `${xprImportLine()}
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}
 export default defineQuery({ handler: async () => ({ ok: true }) });`,
     });
 
@@ -291,9 +291,9 @@ export default defineQuery({ handler: async () => ({ ok: true }) });`,
       const runtime = await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
       const transport = runtime.transport as any;
 
-      expect(transport.http.boot()).toBe("xpr-test-service");
-      expect(transport.http.route()).toBe("xpr-test-service");
-      expect(() => transport.http.forbidden()).toThrow("XPR_CONTEXT_FORBIDDEN");
+      expect(transport.http.boot()).toBe("dispatchkit-test-service");
+      expect(transport.http.route()).toBe("dispatchkit-test-service");
+      expect(() => transport.http.forbidden()).toThrow("DISPATCHKIT_CONTEXT_FORBIDDEN");
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }
@@ -301,7 +301,7 @@ export default defineQuery({ handler: async () => ({ ok: true }) });`,
 
   it("treats allowGetTransportCtxFrom as extension of default locations", async () => {
     const rootDir = createTempProject({
-      "src/transport/http.ts": `${xprImportLine()}
+      "src/transport/http.ts": `${dispatchkitImportLine()}
 import { readFromHttpHelper } from "./http/nested/helper.ts";
 import { readForbiddenName } from "../lib/ctx.ts";
 
@@ -315,15 +315,15 @@ export default defineTransport(
     allowGetTransportCtxFrom: ["http"],
   },
 );`,
-      "src/transport/http/nested/helper.ts": `${xprImportLine()}
+      "src/transport/http/nested/helper.ts": `${dispatchkitImportLine()}
 export function readFromHttpHelper() {
   return getTransportCtx().config.SERVICE_NAME;
 }`,
-      "src/lib/ctx.ts": `${xprImportLine()}
+      "src/lib/ctx.ts": `${dispatchkitImportLine()}
 export function readForbiddenName() {
   return getTransportCtx().config.SERVICE_NAME;
 }`,
-      "src/modules/ping.query.ts": `${xprImportLine()}
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}
 export default defineQuery({ handler: async () => ({ ok: true }) });`,
     });
 
@@ -331,9 +331,9 @@ export default defineQuery({ handler: async () => ({ ok: true }) });`,
       const runtime = await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
       const transport = runtime.transport as any;
 
-      expect(transport.http.direct()).toBe("xpr-test-service");
-      expect(transport.http.helper()).toBe("xpr-test-service");
-      expect(() => transport.http.forbidden()).toThrow("XPR_CONTEXT_FORBIDDEN");
+      expect(transport.http.direct()).toBe("dispatchkit-test-service");
+      expect(transport.http.helper()).toBe("dispatchkit-test-service");
+      expect(() => transport.http.forbidden()).toThrow("DISPATCHKIT_CONTEXT_FORBIDDEN");
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }
@@ -341,7 +341,7 @@ export default defineQuery({ handler: async () => ({ ok: true }) });`,
 
   it("allows getTransportCtx only from configured src-relative paths", async () => {
     const rootDir = createTempProject({
-      "src/transport/mytransport.ts": `${xprImportLine()}
+      "src/transport/mytransport.ts": `${dispatchkitImportLine()}
 import { readAllowedName } from "./mytransport2/nested/helper.ts";
 import { readForbiddenName } from "../lib/ctx.ts";
 
@@ -358,15 +358,15 @@ export default defineTransport(
     ],
   },
 );`,
-      "src/transport/mytransport2/nested/helper.ts": `${xprImportLine()}
+      "src/transport/mytransport2/nested/helper.ts": `${dispatchkitImportLine()}
 export function readAllowedName() {
   return getTransportCtx().config.SERVICE_NAME;
 }`,
-      "src/lib/ctx.ts": `${xprImportLine()}
+      "src/lib/ctx.ts": `${dispatchkitImportLine()}
 export function readForbiddenName() {
   return getTransportCtx().config.SERVICE_NAME;
 }`,
-      "src/modules/ping.query.ts": `${xprImportLine()}
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}
 export default defineQuery({ handler: async () => ({ ok: true }) });`,
     });
 
@@ -374,10 +374,10 @@ export default defineQuery({ handler: async () => ({ ok: true }) });`,
       const runtime = await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
       const transport = runtime.transport as any;
 
-      expect(transport.mytransport.direct()).toBe("xpr-test-service");
-      expect(transport.mytransport.allowed()).toBe("xpr-test-service");
+      expect(transport.mytransport.direct()).toBe("dispatchkit-test-service");
+      expect(transport.mytransport.allowed()).toBe("dispatchkit-test-service");
       expect(() => transport.mytransport.forbidden()).toThrow(
-        "XPR_CONTEXT_FORBIDDEN",
+        "DISPATCHKIT_CONTEXT_FORBIDDEN",
       );
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
@@ -389,8 +389,8 @@ describe("config", () => {
   it("applies defaults < env < options and extends schema from config.ts", async () => {
     const rootDir = createTempProject({
       ".env": "SERVICE_NAME=from-env\nLOG_LEVEL=error\nCUSTOM_FLAG=env-value\n",
-      "src/config.ts": `${xprImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ CUSTOM_FLAG: z.string(), FEATURE_TOGGLE: z.string().default("from-schema") }));`,
-      "src/modules/ping.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => getModuleCtx().config });`,
+      "src/config.ts": `${dispatchkitImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ CUSTOM_FLAG: z.string(), FEATURE_TOGGLE: z.string().default("from-schema") }));`,
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => getModuleCtx().config });`,
     });
 
     try {
@@ -415,7 +415,7 @@ describe("config", () => {
 describe("artifacts", () => {
   it("updates manifest only when discovery structure changes", async () => {
     const rootDir = createTempProject({
-      "src/modules/ping.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
+      "src/modules/ping.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
     });
 
     try {
@@ -431,7 +431,7 @@ describe("artifacts", () => {
       await Bun.sleep(10);
       writeFileSync(
         join(rootDir, "src/modules/ping.query.ts"),
-        `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: false, version: 2 }) });`,
+        `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: false, version: 2 }) });`,
       );
       await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
 
@@ -448,7 +448,7 @@ describe("artifacts", () => {
       rmSync(join(rootDir, "src/modules/ping.query.ts"), { force: true });
       writeFileSync(
         join(rootDir, "src/modules/ping-renamed.query.ts"),
-        `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
+        `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
       );
       await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
 
@@ -473,12 +473,12 @@ describe("artifacts", () => {
 
   it("generates manifest and declaration artifacts", async () => {
     const rootDir = createTempProject({
-      "src/modules/widget/get.query.ts": `${xprImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
-      "src/modules/widget/upsert.mutation.ts": `${xprImportLine()}\nexport default defineMutation({ handler: async () => ({ id: "1" }) });`,
-      "src/modules/widget/sync.action.ts": `${xprImportLine()}\nexport default defineAction({ handler: async () => ({ synced: true }) });`,
-      "src/infra/data.ts": `${xprImportLine()}\nexport default defineInfra(() => ({ data: {} }));`,
-      "src/infra/my-transport.ts": `${xprImportLine()}\nexport default defineTransport(() => ({ kind: "first" }));`,
-      "src/infra/my-second-transport/index.ts": `${xprImportLine()}\nexport default defineTransport(() => ({ kind: "second" }));`,
+      "src/modules/widget/get.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
+      "src/modules/widget/upsert.mutation.ts": `${dispatchkitImportLine()}\nexport default defineMutation({ handler: async () => ({ id: "1" }) });`,
+      "src/modules/widget/sync.action.ts": `${dispatchkitImportLine()}\nexport default defineAction({ handler: async () => ({ synced: true }) });`,
+      "src/infra/data.ts": `${dispatchkitImportLine()}\nexport default defineInfra(() => ({ data: {} }));`,
+      "src/infra/my-transport.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ kind: "first" }));`,
+      "src/infra/my-second-transport/index.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ kind: "second" }));`,
     });
 
     try {
@@ -517,12 +517,10 @@ describe("artifacts", () => {
       expect(busTypes.includes("GeneratedTransport")).toBe(true);
       expect(busTypes.includes('"my-transport"')).toBe(true);
       expect(busTypes.includes('"my-second-transport"')).toBe(true);
-      // @ts-expect-error
       expect((runtime.transport as Record<string, unknown>)["my-transport"]).toEqual({
         kind: "first",
       });
       expect(
-        // @ts-expect-error
         (runtime.transport as Record<string, unknown>)["my-second-transport"],
       ).toEqual({
         kind: "second",

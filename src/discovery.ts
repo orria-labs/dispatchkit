@@ -25,7 +25,7 @@ function toCamelSegment(input: string): string {
     .filter(Boolean);
 
   if (parts.length === 0) {
-    throw new Error(`XPR_DISCOVERY_INVALID_SEGMENT: Cannot derive segment from "${input}"`);
+    throw new Error(`DISPATCHKIT_DISCOVERY_INVALID_SEGMENT: Cannot derive segment from "${input}"`);
   }
 
   return parts
@@ -38,7 +38,7 @@ function toCamelSegment(input: string): string {
 
 function joinCamelSegments(segments: string[]): string {
   if (segments.length === 0) {
-    throw new Error("XPR_DISCOVERY_INVALID_NAME: Empty operation path");
+    throw new Error("DISPATCHKIT_DISCOVERY_INVALID_NAME: Empty operation path");
   }
 
   return segments
@@ -61,7 +61,7 @@ export function resolveOperationName(relativeModulePath: string): {
 
   if (!match) {
     throw new Error(
-      `XPR_DISCOVERY_INVALID_OPERATION_FILE: "${relativeModulePath}" is not *.query.ts|*.mutation.ts|*.action.ts`,
+      `DISPATCHKIT_DISCOVERY_INVALID_OPERATION_FILE: "${relativeModulePath}" is not *.query.ts|*.mutation.ts|*.action.ts`,
     );
   }
 
@@ -118,7 +118,7 @@ async function discoverModuleOperations(modulesDir: string): Promise<DiscoveredO
 
     if (existing) {
       throw new Error(
-        `XPR_DISCOVERY_NAME_COLLISION: Operation name "${name}" collides between "${existing}" and "${filePath}" in kind "${kind}"`,
+        `DISPATCHKIT_DISCOVERY_NAME_COLLISION: Operation name "${name}" collides between "${existing}" and "${filePath}" in kind "${kind}"`,
       );
     }
 
@@ -160,7 +160,7 @@ function toDiscoveredTransport(files: string[], source: TransportSource): Discov
     const existing = keys.get(key);
     if (existing) {
       throw new Error(
-        `XPR_DISCOVERY_TRANSPORT_COLLISION: Transport key "${key}" collides between "${existing}" and "${filePath}"`,
+        `DISPATCHKIT_DISCOVERY_TRANSPORT_COLLISION: Transport key "${key}" collides between "${existing}" and "${filePath}"`,
       );
     }
     keys.set(key, filePath);

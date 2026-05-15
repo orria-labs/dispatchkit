@@ -123,14 +123,24 @@ export default defineLogger((config) => {
 ```ts
 import { defineInfra } from "@orria/dispatchkit";
 
-export default defineInfra(() => ({
-  repo: {
-    get: (id: string) => ({ id }),
-  },
-}));
+export default defineInfra(async ({ config, logger }) => {
+  logger.info("infra init", { service: config.SERVICE_NAME });
+
+  return {
+    repo: {
+      get: (id: string) => ({ id }),
+    },
+  };
+});
 ```
 
-Результаты всех infra-модулей объединяются в `runtime.infra`.
+В `defineInfra()` в `ctx` доступны только `{ config, logger }`.
+
+Поведение возвращаемого значения:
+
+- Plain-объекты из нескольких infra-модулей объединяются в `runtime.infra` по верхнеуровневым ключам.
+- Можно возвращать non-plain объект (например instance класса, как `PrismaClient`).
+- Non-plain результат нельзя объединить с результатами других infra-модулей (runtime выбросит `DISPATCHKIT_INFRA_INVALID_RESULT`).
 
 ### 5) Transport-модули
 
@@ -179,10 +189,17 @@ const runtime = await buildRuntime({
 - `getModuleCtx()` возвращает `{ config, logger, infra, bus }`
 - `getTransportCtx()` возвращает `{ config, logger, bus }`
 
+Матрица контекстов фабрик/хендлеров:
+
+- `defineLogger((config) => ...)` -> `config`
+- `defineInfra((ctx) => ...)` -> `{ config, logger }`
+- `defineTransport((ctx) => ...)` -> `{ config, logger, bus }`
+- `defineQuery/defineMutation/defineAction.handler(ctx)` -> `{ config, logger, infra, bus, input }`
+
 При некорректном доступе выбрасываются структурированные ошибки:
 
-- `XPR_CONTEXT_UNAVAILABLE`
-- `XPR_CONTEXT_FORBIDDEN`
+- `DISPATCHKIT_CONTEXT_UNAVAILABLE`
+- `DISPATCHKIT_CONTEXT_FORBIDDEN`
 
 ## CQRS Guards
 
@@ -192,7 +209,7 @@ Runtime принудительно ограничивает цепочки вы�
 - `mutation` -> `query`, `mutation`
 - `action` -> `query`, `mutation`, `action`
 
-Нарушение вызывает `XPR_CQRS_GUARD`.
+Нарушение вызывает `DISPATCHKIT_CQRS_GUARD`.
 
 ## Правила Discovery
 

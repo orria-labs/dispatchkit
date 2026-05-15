@@ -30,6 +30,7 @@ export type {
   InferConfigFromDefinition,
   InferInfraModule,
   InferTransportModule,
+  InfraContext,
   InfraDefinition,
   LoggerDefinition,
   LoggerLike,

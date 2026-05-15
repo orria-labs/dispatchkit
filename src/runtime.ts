@@ -17,6 +17,7 @@ import type {
   ConfigDefinition,
   ConsoleLike,
   DiscoveryResult,
+  InfraContext,
   InfraDefinition,
   LoggerDefinition,
   LoggerLike,
@@ -440,9 +441,9 @@ async function resolveConfigSchema(
   const configDefinition = (await importDefault(configFilePath)) as
     | ConfigDefinition
     | undefined;
-  if (!configDefinition || configDefinition.__xprType !== "config") {
+  if (!configDefinition || configDefinition.__dispatchkitType !== "config") {
     throw new Error(
-      `XPR_CONFIG_INVALID_EXPORT: "${normalizeSeparators(configFilePath)}" must export default defineConfig(...)`,
+      `DISPATCHKIT_CONFIG_INVALID_EXPORT: "${normalizeSeparators(configFilePath)}" must export default defineConfig(...)`,
     );
   }
 
@@ -455,7 +456,7 @@ function wrapValidationError(options: {
   cause: unknown;
 }): Error {
   const error = new Error(
-    `XPR_VALIDATION_ERROR: ${options.operation} failed ${options.phase} validation`,
+    `DISPATCHKIT_VALIDATION_ERROR: ${options.operation} failed ${options.phase} validation`,
   );
   (error as Error & { cause?: unknown }).cause = options.cause;
   return error;
@@ -564,22 +565,22 @@ async function resolveLogger(options: {
   const loggerDefinition = (await importDefault(loggerFilePath)) as
     | LoggerDefinition<RuntimeConfig>
     | undefined;
-  if (!loggerDefinition || loggerDefinition.__xprType !== "logger") {
+  if (!loggerDefinition || loggerDefinition.__dispatchkitType !== "logger") {
     throw new Error(
-      `XPR_LOGGER_INVALID_EXPORT: "${normalizeSeparators(loggerFilePath)}" must export default defineLogger(...)`,
+      `DISPATCHKIT_LOGGER_INVALID_EXPORT: "${normalizeSeparators(loggerFilePath)}" must export default defineLogger(...)`,
     );
   }
 
   const resolved = loggerDefinition.factory(options.config);
   if (!resolved || typeof resolved !== "object") {
     throw new Error(
-      "XPR_LOGGER_INVALID_FACTORY_RESULT: defineLogger() factory must return { logger, console }",
+      "DISPATCHKIT_LOGGER_INVALID_FACTORY_RESULT: defineLogger() factory must return { logger, console }",
     );
   }
 
   if (!resolved.logger || !resolved.console) {
     throw new Error(
-      "XPR_LOGGER_INVALID_FACTORY_RESULT: logger.ts must provide both logger and console",
+      "DISPATCHKIT_LOGGER_INVALID_FACTORY_RESULT: logger.ts must provide both logger and console",
     );
   }
 
@@ -616,7 +617,7 @@ function assignBusEntry(options: {
 
   if (section[operationName] !== undefined) {
     throw new Error(
-      `XPR_BUS_NAME_COLLISION: Duplicate ${kind} operation key "${operationName}"`,
+      `DISPATCHKIT_BUS_NAME_COLLISION: Duplicate ${kind} operation key "${operationName}"`,
     );
   }
 
@@ -640,7 +641,7 @@ function assignBusEntry(options: {
 
     if (isBusMethod(existing)) {
       throw new Error(
-        `XPR_BUS_GROUP_COLLISION: Cannot create namespace "${key}" for ${kind}.${operationName}`,
+        `DISPATCHKIT_BUS_GROUP_COLLISION: Cannot create namespace "${key}" for ${kind}.${operationName}`,
       );
     }
 
@@ -651,7 +652,7 @@ function assignBusEntry(options: {
   const leafValue = current[leaf];
   if (leafValue !== undefined) {
     throw new Error(
-      `XPR_BUS_GROUP_COLLISION: Duplicate grouped key "${kind}.${segments.join(".")}"`,
+      `DISPATCHKIT_BUS_GROUP_COLLISION: Duplicate grouped key "${kind}.${segments.join(".")}"`,
     );
   }
 
@@ -673,7 +674,7 @@ function createBusMethod(options: {
 
     if (caller && !isAllowedCall(caller.kind, operation.kind)) {
       throw new Error(
-        `XPR_CQRS_GUARD: ${caller.kind} "${caller.name}" cannot call ${operation.kind} "${operation.name}"`,
+        `DISPATCHKIT_CQRS_GUARD: ${caller.kind} "${caller.name}" cannot call ${operation.kind} "${operation.name}"`,
       );
     }
 
@@ -745,12 +746,17 @@ function mergeStrict(
   for (const [key, value] of Object.entries(source)) {
     if (Object.hasOwn(target, key)) {
       throw new Error(
-        `XPR_${scope.toUpperCase()}_KEY_COLLISION: Duplicate key "${key}" while merging ${scope} modules`,
+        `DISPATCHKIT_${scope.toUpperCase()}_KEY_COLLISION: Duplicate key "${key}" while merging ${scope} modules`,
       );
     }
 
     target[key] = value;
   }
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function wrapTransportWithContext(
@@ -801,15 +807,15 @@ async function loadOperationDefinitions(
       RuntimeBusBase
     >;
 
-    if (!definition || definition.__xprType !== "operation") {
+    if (!definition || definition.__dispatchkitType !== "operation") {
       throw new Error(
-        `XPR_OPERATION_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineQuery/defineMutation/defineAction(...)`,
+        `DISPATCHKIT_OPERATION_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineQuery/defineMutation/defineAction(...)`,
       );
     }
 
     if (definition.kind !== operation.kind) {
       throw new Error(
-        `XPR_OPERATION_KIND_MISMATCH: "${normalizeSeparators(absolute)}" declares "${definition.kind}" but file name implies "${operation.kind}"`,
+        `DISPATCHKIT_OPERATION_KIND_MISMATCH: "${normalizeSeparators(absolute)}" declares "${definition.kind}" but file name implies "${operation.kind}"`,
       );
     }
 
@@ -837,7 +843,9 @@ async function loadInfraModules(options: {
     source: TransportSource;
   }>;
 }> {
-  const infra: Record<string, unknown> = {};
+  const mergedInfra: Record<string, unknown> = {};
+  let infra = mergedInfra;
+  let hasOpaqueInfra = false;
   const transportFromInfra: Array<{
     key: string;
     filePath: string;
@@ -850,24 +858,19 @@ async function loadInfraModules(options: {
       file,
     );
     const definition = (await importDefault(absolute)) as
-      | InfraDefinition<
-        RuntimeConfig,
-        Record<string, unknown>,
-        RuntimeBusBase,
-        Record<string, unknown>
-      >
+      | InfraDefinition<RuntimeConfig, unknown>
       | TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
 
     if (
       !definition ||
-      (definition.__xprType !== "infra" && definition.__xprType !== "transport")
+      (definition.__dispatchkitType !== "infra" && definition.__dispatchkitType !== "transport")
     ) {
       throw new Error(
-        `XPR_INFRA_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineInfra(...) or defineTransport(...)`,
+        `DISPATCHKIT_INFRA_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineInfra(...) or defineTransport(...)`,
       );
     }
 
-    if (definition.__xprType === "transport") {
+    if (definition.__dispatchkitType === "transport") {
       transportFromInfra.push({
         key: resolveTransportKey(file),
         filePath: file,
@@ -876,16 +879,35 @@ async function loadInfraModules(options: {
       continue;
     }
 
+    const infraCtx: InfraContext<RuntimeConfig> = {
+      config: options.ctx.config,
+      logger: options.ctx.logger,
+    };
     const result = await runtimeGlobalState.moduleContextStorage.run(options.ctx, () =>
-      Promise.resolve(definition.factory(options.ctx)),
+      Promise.resolve(definition.factory(infraCtx)),
     );
     if (!result || typeof result !== "object" || Array.isArray(result)) {
       throw new Error(
-        `XPR_INFRA_INVALID_RESULT: "${normalizeSeparators(absolute)}" must return an object`,
+        `DISPATCHKIT_INFRA_INVALID_RESULT: "${normalizeSeparators(absolute)}" must return an object`,
       );
     }
 
-    mergeStrict(infra, result, "infra");
+    const moduleResult = result as Record<string, unknown>;
+    const plainObjectResult = isPlainObject(result);
+
+    if (!plainObjectResult) {
+      if (hasOpaqueInfra || Object.keys(infra).length > 0) {
+        throw new Error(
+          `DISPATCHKIT_INFRA_INVALID_RESULT: "${normalizeSeparators(absolute)}" returned a non-plain object that cannot be merged with other infra modules`,
+        );
+      }
+
+      infra = moduleResult;
+      hasOpaqueInfra = true;
+      continue;
+    }
+
+    mergeStrict(infra, moduleResult, "infra");
   }
 
   return { infra, transportFromInfra };
@@ -917,9 +939,9 @@ async function loadTransportModules(options: {
       () => importDefault(absolute),
     )) as TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
 
-    if (!definition || definition.__xprType !== "transport") {
+    if (!definition || definition.__dispatchkitType !== "transport") {
       throw new Error(
-        `XPR_TRANSPORT_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineTransport(...)`,
+        `DISPATCHKIT_TRANSPORT_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineTransport(...)`,
       );
     }
 
@@ -957,7 +979,7 @@ async function loadTransportModules(options: {
     );
     if (Object.hasOwn(transport, module.key)) {
       throw new Error(
-        `XPR_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`,
+        `DISPATCHKIT_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`,
       );
     }
 
@@ -1052,7 +1074,7 @@ export function getModuleCtx(): ModuleContext<RuntimeConfig> {
   if (!runtimeGlobalState.activeRuntime) {
     const callerFilePath = resolveCallerFilePath(getModuleCtx);
     throw createRuntimeError({
-      code: "XPR_CONTEXT_UNAVAILABLE",
+      code: "DISPATCHKIT_CONTEXT_UNAVAILABLE",
       message: "Module context is unavailable outside runtime execution",
       where: toDisplayPath(callerFilePath),
       help: [
@@ -1079,7 +1101,7 @@ export function getTransportCtx(): TransportContext<RuntimeConfig> {
   if (guard) {
     if (!isTransportCtxCallAllowed({ guard, callerFilePath })) {
       throw createRuntimeError({
-        code: "XPR_CONTEXT_FORBIDDEN",
+        code: "DISPATCHKIT_CONTEXT_FORBIDDEN",
         message: "getTransportCtx() call is not allowed from this file",
         where: toDisplayPathFromSrc({
           srcDir: guard.srcDir,
@@ -1103,7 +1125,7 @@ export function getTransportCtx(): TransportContext<RuntimeConfig> {
 
   if (!runtimeGlobalState.activeRuntime) {
     throw createRuntimeError({
-      code: "XPR_CONTEXT_UNAVAILABLE",
+      code: "DISPATCHKIT_CONTEXT_UNAVAILABLE",
       message: "Transport context is unavailable outside runtime execution",
       where: toDisplayPath(callerFilePath),
       help: [
