@@ -51,6 +51,23 @@ function dispatchkitImportLine(): string {
   return `import { defineAction, defineConfig, defineInfra, defineLogger, defineMutation, defineQuery, defineTransport, getModuleCtx, getTransportCtx } from ${JSON.stringify(runtimeImport)};`;
 }
 
+function runCommand(
+  command: string[],
+  cwd: string,
+): { exitCode: number; stdout: string; stderr: string } {
+  const result = Bun.spawnSync(command, {
+    cwd,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+  };
+}
+
 describe("logger", () => {
   it("mounts global console and supports fallback logger", async () => {
     const rootDir = createTempProject({
@@ -446,6 +463,81 @@ describe("config", () => {
       expect(runtime.config.LOG_LEVEL).toBe("error");
       expect(runtime.config.CUSTOM_FLAG).toBe("env-value");
       expect(runtime.config.FEATURE_TOGGLE).toBe("from-schema");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates generated config typing into buildRuntime return type", async () => {
+    const rootDir = createTempProject({
+      "tsconfig.json": JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ESNext",
+            module: "Preserve",
+            moduleResolution: "bundler",
+            strict: true,
+            allowImportingTsExtensions: true,
+            verbatimModuleSyntax: true,
+            noEmit: true,
+            skipLibCheck: true,
+            types: ["bun"],
+          },
+          include: ["src/**/*.ts", "src/**/*.d.ts"],
+        },
+        null,
+        2,
+      ),
+      "src/config.ts": `${dispatchkitImportLine()}
+import { z } from "zod";
+
+export default defineConfig(
+  z.object({
+    PORT: z.number().int().positive().default(80),
+    HOST: z.string().url(),
+    DATABASE_URL: z.string().url(),
+  }),
+);`,
+      "src/transport/http.ts": `${dispatchkitImportLine()}
+export default defineTransport(() => ({
+  listen: (options: { hostname: string; port: number }) => options,
+}));`,
+      "src/main.ts": `import { buildRuntime } from ${JSON.stringify(runtimeImport)};
+
+const runtime = await buildRuntime();
+
+runtime.transport.http.listen({
+  hostname: "0.0.0.0",
+  port: runtime.config.PORT,
+});
+
+const host: string = runtime.config.HOST;
+const port: number = runtime.config.PORT;
+const dbUrl: string = runtime.config.DATABASE_URL;
+
+void host;
+void port;
+void dbUrl;`,
+    });
+
+    try {
+      await generateRuntime({
+        rootDir,
+        srcDir: join(rootDir, "src"),
+      });
+
+      const result = runCommand(
+        ["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit"],
+        rootDir,
+      );
+
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `Typecheck failed:\n${result.stdout}\n${result.stderr}`.trim(),
+        );
+      }
+
+      expect(result.exitCode).toBe(0);
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }

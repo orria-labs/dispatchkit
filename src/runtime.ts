@@ -27,7 +27,10 @@ import type {
   Runtime,
   RuntimeBus,
   RuntimeBusBase,
+  RuntimeConfigShape,
   RuntimeDefaultConfig,
+  RuntimeInfraShape,
+  RuntimeTransportShape,
   TransportContext,
   TransportDefinition,
   TransportDefinitionOptions,
@@ -1033,10 +1036,18 @@ async function resolveRuntimeConfig(options: {
   return (await schema.parseAsync(rawConfig)) as RuntimeConfig;
 }
 
-export function getModuleCtx(): ModuleContext<RuntimeConfig> {
+export function getModuleCtx(): ModuleContext<
+  RuntimeConfigShape,
+  RuntimeInfraShape,
+  RuntimeBus
+> {
   const current = runtimeGlobalState.moduleContextStorage.getStore();
   if (current) {
-    return current as unknown as ModuleContext<RuntimeConfig>;
+    return current as unknown as ModuleContext<
+      RuntimeConfigShape,
+      RuntimeInfraShape,
+      RuntimeBus
+    >;
   }
 
   if (!runtimeGlobalState.activeRuntime) {
@@ -1057,10 +1068,17 @@ export function getModuleCtx(): ModuleContext<RuntimeConfig> {
     logger: runtimeGlobalState.activeRuntime.logger,
     infra: runtimeGlobalState.activeRuntime.infra,
     bus: runtimeGlobalState.activeRuntime.bus,
-  } as unknown as ModuleContext<RuntimeConfig>;
+  } as unknown as ModuleContext<
+    RuntimeConfigShape,
+    RuntimeInfraShape,
+    RuntimeBus
+  >;
 }
 
-export function getTransportCtx(): TransportContext<RuntimeConfig> {
+export function getTransportCtx(): TransportContext<
+  RuntimeConfigShape,
+  RuntimeBus
+> {
   const guard =
     runtimeGlobalState.transportCtxAccessGuardStorage.getStore() ??
     runtimeGlobalState.activeTransportCtxAccessGuard;
@@ -1088,7 +1106,10 @@ export function getTransportCtx(): TransportContext<RuntimeConfig> {
 
   const current = runtimeGlobalState.transportContextStorage.getStore();
   if (current) {
-    return current as unknown as TransportContext<RuntimeConfig>;
+    return current as unknown as TransportContext<
+      RuntimeConfigShape,
+      RuntimeBus
+    >;
   }
 
   if (!runtimeGlobalState.activeRuntime) {
@@ -1108,12 +1129,19 @@ export function getTransportCtx(): TransportContext<RuntimeConfig> {
     config: runtimeGlobalState.activeRuntime.config,
     logger: runtimeGlobalState.activeRuntime.logger,
     bus: runtimeGlobalState.activeRuntime.bus,
-  } as unknown as TransportContext<RuntimeConfig>;
+  } as unknown as TransportContext<RuntimeConfigShape, RuntimeBus>;
 }
 
 export async function buildRuntime(
   options: BuildRuntimeOptions = {},
-): Promise<Runtime<RuntimeConfig>> {
+): Promise<
+  Runtime<
+    RuntimeConfigShape,
+    RuntimeInfraShape,
+    RuntimeBus,
+    RuntimeTransportShape
+  >
+> {
   runtimeGlobalState.activeRuntime = undefined;
   runtimeGlobalState.activeTransportCtxAccessGuard = undefined;
 
@@ -1219,5 +1247,10 @@ export async function buildRuntime(
 
   mountGlobalConsole(runtimeConsole);
 
-  return runtimeRef as unknown as Runtime<RuntimeConfig>;
+  return runtimeRef as unknown as Runtime<
+    RuntimeConfigShape,
+    RuntimeInfraShape,
+    RuntimeBus,
+    RuntimeTransportShape
+  >;
 }

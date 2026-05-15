@@ -6,7 +6,6 @@ import type {
   OperationDefinition,
   OperationKind,
   RuntimeBus,
-  RuntimeBusBase,
   RuntimeConfigShape,
   RuntimeInfraShape,
   TransportDefinition,
@@ -113,7 +112,7 @@ export function defineInfra<
 
 export function defineTransport<
   TConfig = RuntimeConfigShape,
-  TBus = RuntimeBusBase,
+  TBus = RuntimeBus,
   TResult = unknown,
 >(
   factory: TransportDefinition<TConfig, TBus, TResult>["factory"],
