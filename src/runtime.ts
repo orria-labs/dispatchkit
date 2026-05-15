@@ -738,27 +738,6 @@ function createBusMethod(options: {
   return call;
 }
 
-function mergeStrict(
-  target: Record<string, unknown>,
-  source: Record<string, unknown>,
-  scope: string,
-): void {
-  for (const [key, value] of Object.entries(source)) {
-    if (Object.hasOwn(target, key)) {
-      throw new Error(
-        `DISPATCHKIT_${scope.toUpperCase()}_KEY_COLLISION: Duplicate key "${key}" while merging ${scope} modules`,
-      );
-    }
-
-    target[key] = value;
-  }
-}
-
-function isPlainObject(value: object): value is Record<string, unknown> {
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
 function wrapTransportWithContext(
   value: unknown,
   ctx: TransportContext<RuntimeConfig, RuntimeBusBase>,
@@ -843,9 +822,7 @@ async function loadInfraModules(options: {
     source: TransportSource;
   }>;
 }> {
-  const mergedInfra: Record<string, unknown> = {};
-  let infra = mergedInfra;
-  let hasOpaqueInfra = false;
+  const infra: Record<string, unknown> = {};
   const transportFromInfra: Array<{
     key: string;
     filePath: string;
@@ -892,22 +869,13 @@ async function loadInfraModules(options: {
       );
     }
 
-    const moduleResult = result as Record<string, unknown>;
-    const plainObjectResult = isPlainObject(result);
-
-    if (!plainObjectResult) {
-      if (hasOpaqueInfra || Object.keys(infra).length > 0) {
-        throw new Error(
-          `DISPATCHKIT_INFRA_INVALID_RESULT: "${normalizeSeparators(absolute)}" returned a non-plain object that cannot be merged with other infra modules`,
-        );
-      }
-
-      infra = moduleResult;
-      hasOpaqueInfra = true;
-      continue;
+    const moduleKey = resolveTransportKey(file);
+    if (Object.hasOwn(infra, moduleKey)) {
+      throw new Error(
+        `DISPATCHKIT_INFRA_KEY_COLLISION: Duplicate infra key "${moduleKey}" from "${file}"`,
+      );
     }
-
-    mergeStrict(infra, moduleResult, "infra");
+    infra[moduleKey] = result;
   }
 
   return { infra, transportFromInfra };

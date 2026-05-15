@@ -138,9 +138,10 @@ export default defineInfra(async ({ config, logger }) => {
 
 Поведение возвращаемого значения:
 
-- Plain-объекты из нескольких infra-модулей объединяются в `runtime.infra` по верхнеуровневым ключам.
-- Можно возвращать non-plain объект (например instance класса, как `PrismaClient`).
-- Non-plain результат нельзя объединить с результатами других infra-модулей (runtime выбросит `DISPATCHKIT_INFRA_INVALID_RESULT`).
+- Каждый infra-модуль доступен по доменному ключу:
+- `src/infra/database.ts` -> `runtime.infra.database`
+- `src/infra/database/index.ts` -> `runtime.infra.database`
+- Возвращаемое значение модуля присваивается этому ключу как есть (plain-объект или instance класса).
 
 ### 5) Transport-модули
 

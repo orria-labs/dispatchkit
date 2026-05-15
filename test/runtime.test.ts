@@ -107,6 +107,46 @@ describe("discovery", () => {
   });
 });
 
+describe("infra mapping", () => {
+  it("exposes infra by domain key from file name and module context", async () => {
+    const rootDir = createTempProject({
+      "src/infra/database.ts": `${dispatchkitImportLine()}
+class DatabaseClient {
+  kind = "database";
+}
+export default defineInfra(async () => new DatabaseClient());`,
+      "src/modules/read.query.ts": `${dispatchkitImportLine()}
+export default defineQuery({
+  handler: async () => ({ kind: getModuleCtx().infra.database.kind }),
+});`,
+    });
+
+    try {
+      const runtime = await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
+      const bus = runtime.bus as any;
+
+      expect((runtime.infra as any).database.kind).toBe("database");
+      await expect(bus.query.read({})).resolves.toEqual({ kind: "database" });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses folder name for infra index.ts modules", async () => {
+    const rootDir = createTempProject({
+      "src/infra/database/index.ts": `${dispatchkitImportLine()}
+export default defineInfra(async () => ({ client: "ok" }));`,
+    });
+
+    try {
+      const runtime = await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
+      expect((runtime.infra as any).database).toEqual({ client: "ok" });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("generate runtime artifacts", () => {
   it("generates types without loading env-dependent runtime", async () => {
     const rootDir = createTempProject({
@@ -514,6 +554,7 @@ describe("artifacts", () => {
       expect(busTypes.includes('"widgetUpsert"')).toBe(true);
       expect(busTypes.includes('"widget"')).toBe(true);
       expect(busTypes.includes("GeneratedInfra")).toBe(true);
+      expect(busTypes.includes('"data": InferInfraModule')).toBe(true);
       expect(busTypes.includes("GeneratedTransport")).toBe(true);
       expect(busTypes.includes('"my-transport"')).toBe(true);
       expect(busTypes.includes('"my-second-transport"')).toBe(true);

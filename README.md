@@ -144,9 +144,10 @@ export default defineInfra(async ({ config, logger }) => {
 
 Return behavior:
 
-- Plain objects from multiple infra modules are merged into `runtime.infra` by top-level keys.
-- Returning a non-plain object (for example a class instance like `PrismaClient`) is supported.
-- A non-plain infra result cannot be merged with other infra module results (runtime throws `DISPATCHKIT_INFRA_INVALID_RESULT`).
+- Each infra module is exposed by its domain key:
+- `src/infra/database.ts` -> `runtime.infra.database`
+- `src/infra/database/index.ts` -> `runtime.infra.database`
+- Module return value is assigned as-is to that key (plain object or class instance).
 
 ### 5) Transport modules
 

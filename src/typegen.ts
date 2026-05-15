@@ -1,4 +1,5 @@
 import { dirname, join, relative } from "node:path";
+import { resolveTransportKey } from "./discovery.ts";
 import type { DiscoveredTransport, DiscoveryResult } from "./types.ts";
 
 type ManifestShape = {
@@ -115,22 +116,32 @@ function renderTree(
   return lines;
 }
 
-function renderLayerType(options: {
-  aliases: string[];
-  typeName: string;
-  inferTypeName: "InferInfraModule";
+function createInfraType(options: {
+  aliases: Array<{ alias: string; key: string; filePath: string }>;
 }): string {
-  const { aliases, typeName, inferTypeName } = options;
-
-  if (aliases.length === 0) {
-    return `export type ${typeName} = Record<string, unknown>;`;
+  if (options.aliases.length === 0) {
+    return "export type GeneratedInfra = Record<string, unknown>;";
   }
 
-  const unionMembers = aliases
-    .map((alias) => `  | ${inferTypeName}<typeof ${alias}>`)
-    .join("\n");
+  const seen = new Map<string, string>();
+  for (const item of options.aliases) {
+    const existing = seen.get(item.key);
+    if (existing) {
+      throw new Error(
+        `DISPATCHKIT_INFRA_KEY_COLLISION: Duplicate infra key "${item.key}" between "${existing}" and "${item.filePath}"`,
+      );
+    }
+    seen.set(item.key, item.filePath);
+  }
 
-  return `type ${typeName}Union =\n${unionMembers};\n\nexport type ${typeName} = Simplify<UnionToIntersection<${typeName}Union>>;`;
+  const lines = options.aliases
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .map(
+      ({ alias, key }) =>
+        `  ${JSON.stringify(key)}: InferInfraModule<typeof ${alias}>;`,
+    );
+
+  return `export interface GeneratedInfra {\n${lines.join("\n")}\n}`;
 }
 
 function createTransportType(options: {
@@ -156,7 +167,7 @@ function createBusTypesContent(
   discovery: DiscoveryResult,
 ): string {
   const imports: string[] = [
-    `import type { BusMethod, OperationInput, OperationReturn, InferInfraModule, InferTransportModule, Simplify, UnionToIntersection } from "@orria/dispatchkit";`,
+    `import type { BusMethod, OperationInput, OperationReturn, InferInfraModule, InferTransportModule } from "@orria/dispatchkit";`,
   ];
 
   const methodTypes = new Map<string, string>();
@@ -172,10 +183,10 @@ function createBusTypesContent(
     );
   });
 
-  const infraAliases: string[] = [];
+  const infraAliases: Array<{ alias: string; key: string; filePath: string }> = [];
   discovery.infra.forEach((filePath, index) => {
     const alias = `Infra${index}`;
-    infraAliases.push(alias);
+    infraAliases.push({ alias, key: resolveTransportKey(filePath), filePath });
     imports.push(
       `import type ${alias} from "${toImportPath(outputPath, join(srcDir, "infra", filePath))}";`,
     );
@@ -199,10 +210,8 @@ function createBusTypesContent(
   const mutationLines = renderTree(mutationTree, methodTypes);
   const actionLines = renderTree(actionTree, methodTypes);
 
-  const generatedInfraType = renderLayerType({
+  const generatedInfraType = createInfraType({
     aliases: infraAliases,
-    typeName: "GeneratedInfra",
-    inferTypeName: "InferInfraModule",
   });
 
   const generatedTransportType = createTransportType({
