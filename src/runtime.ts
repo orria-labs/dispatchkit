@@ -1167,6 +1167,7 @@ export async function buildRuntime(
   });
 
   const { logger, runtimeConsole } = await resolveLogger({ srcDir, config });
+  mountGlobalConsole(runtimeConsole);
 
   const discovery = await discoverRuntimeFiles(srcDir);
   const loadedOperations = await loadOperationDefinitions(srcDir, discovery);
@@ -1244,8 +1245,6 @@ export async function buildRuntime(
   runtimeGlobalState.activeTransportCtxAccessGuard = transportLoad.guard;
   (globalThis as typeof globalThis & { runtime: unknown }).runtime =
     runtimeRef as any;
-
-  mountGlobalConsole(runtimeConsole);
 
   return runtimeRef as unknown as Runtime<
     RuntimeConfigShape,
