@@ -39,6 +39,7 @@ export interface RuntimeBusBase {
 
 type RuntimeShapeFallback = {
   config: Record<string, unknown>;
+  logger: LoggerLike;
   infra: Record<string, unknown>;
   transport: Record<string, unknown>;
   bus: RuntimeBusBase;
@@ -55,6 +56,12 @@ export type RuntimeConfigShape = RuntimeShapeFromGlobal extends {
 }
   ? TConfig
   : RuntimeShapeFallback["config"];
+
+export type RuntimeLoggerShape = RuntimeShapeFromGlobal extends {
+  logger: infer TLogger;
+}
+  ? TLogger
+  : RuntimeShapeFallback["logger"];
 
 export type RuntimeInfraShape = RuntimeShapeFromGlobal extends {
   infra: infer TInfra;
@@ -76,6 +83,7 @@ export type RuntimeBus = RuntimeShapeFromGlobal extends {
 
 export interface GeneratedRuntimeTypes {
   config: RuntimeConfigShape;
+  logger: RuntimeLoggerShape;
   infra: RuntimeInfraShape;
   transport: RuntimeTransportShape;
   bus: RuntimeBus;
@@ -85,24 +93,29 @@ export interface ModuleContext<
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
+  TLogger = RuntimeLoggerShape,
 > {
   config: TConfig;
-  logger: LoggerLike;
+  logger: TLogger;
   infra: TInfra;
   bus: TBus;
 }
 
-export interface InfraContext<TConfig = RuntimeConfigShape> {
+export interface InfraContext<
+  TConfig = RuntimeConfigShape,
+  TLogger = RuntimeLoggerShape,
+> {
   config: TConfig;
-  logger: LoggerLike;
+  logger: TLogger;
 }
 
 export interface TransportContext<
   TConfig = RuntimeConfigShape,
   TBus = RuntimeBus,
+  TLogger = RuntimeLoggerShape,
 > {
   config: TConfig;
-  logger: LoggerLike;
+  logger: TLogger;
   bus: TBus;
 }
 
@@ -111,7 +124,8 @@ export type ModuleHandlerContext<
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
-> = ModuleContext<TConfig, TInfra, TBus> & {
+  TLogger = RuntimeLoggerShape,
+> = ModuleContext<TConfig, TInfra, TBus, TLogger> & {
   input: TInput;
 };
 
@@ -122,25 +136,32 @@ export interface OperationDefinition<
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
+  TLogger = RuntimeLoggerShape,
 > {
   readonly __dispatchkitType: "operation";
   readonly kind: TKind;
   readonly input?: TInputSchema;
   readonly return?: TReturnSchema;
   readonly handler: (
-    ctx: ModuleHandlerContext<InferSchema<TInputSchema, unknown>, TConfig, TInfra, TBus>,
+    ctx: ModuleHandlerContext<
+      InferSchema<TInputSchema, unknown>,
+      TConfig,
+      TInfra,
+      TBus,
+      TLogger
+    >,
   ) =>
     | Promise<InferSchema<TReturnSchema, unknown>>
     | InferSchema<TReturnSchema, unknown>;
 }
 
 export type OperationInput<T> =
-  T extends OperationDefinition<OperationKind, infer TInput, any, any, any, any>
+  T extends OperationDefinition<OperationKind, infer TInput, any, any, any, any, any>
   ? InferSchema<TInput, unknown>
   : never;
 
 export type OperationReturn<T> =
-  T extends OperationDefinition<OperationKind, any, infer TReturn, any, any, any>
+  T extends OperationDefinition<OperationKind, any, infer TReturn, any, any, any, any>
   ? InferSchema<TReturn, unknown>
   : never;
 
@@ -149,26 +170,32 @@ export interface ConfigDefinition<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   readonly schema: TSchema;
 }
 
-export interface LoggerDefinition<TConfig = RuntimeConfigShape> {
+export interface LoggerDefinition<
+  TConfig = RuntimeConfigShape,
+  TLogger extends LoggerLike = LoggerLike,
+> {
   readonly __dispatchkitType: "logger";
-  readonly factory: (config: TConfig) => { logger: LoggerLike; console: ConsoleLike };
+  readonly factory: (config: TConfig) => { logger: TLogger; console: ConsoleLike };
 }
 
 export interface InfraDefinition<
   TConfig = RuntimeConfigShape,
   TResult = RuntimeInfraShape,
+  TLogger = RuntimeLoggerShape,
 > {
   readonly __dispatchkitType: "infra";
-  readonly factory: (ctx: InfraContext<TConfig>) => TResult | Promise<TResult>;
+  readonly factory: (ctx: InfraContext<TConfig, TLogger>) => TResult | Promise<TResult>;
 }
 
 export interface TransportDefinition<
   TConfig = RuntimeConfigShape,
   TBus = RuntimeBus,
   TResult = unknown,
+  TLogger = RuntimeLoggerShape,
 > {
   readonly __dispatchkitType: "transport";
-  readonly factory: (ctx: TransportContext<TConfig, TBus>) => TResult | Promise<TResult>;
+  readonly factory:
+    (ctx: TransportContext<TConfig, TBus, TLogger>) => TResult | Promise<TResult>;
   readonly options?: TransportDefinitionOptions;
 }
 
@@ -189,9 +216,10 @@ export interface Runtime<
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
   TTransport = RuntimeTransportShape,
+  TLogger = RuntimeLoggerShape,
 > {
   config: TConfig;
-  logger: LoggerLike;
+  logger: TLogger;
   infra: TInfra;
   bus: TBus;
   transport: TTransport;
@@ -215,13 +243,17 @@ export type UnionToIntersection<T> =
   : never;
 
 export type InferInfraModule<T> =
-  T extends InfraDefinition<any, any> ? Awaited<ReturnType<T["factory"]>> : never;
+  T extends InfraDefinition<any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
 
 export type InferTransportModule<T> =
-  T extends TransportDefinition<any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
+  T extends TransportDefinition<any, any, any, any> ? Awaited<ReturnType<T["factory"]>>
+  : never;
 
 export type InferConfigFromDefinition<T> =
   T extends ConfigDefinition<infer TSchema> ? z.infer<TSchema> : {};
+
+export type InferLoggerFromDefinition<T> =
+  T extends LoggerDefinition<any, infer TLogger> ? TLogger : LoggerLike;
 
 export interface DiscoveredOperation {
   kind: OperationKind;

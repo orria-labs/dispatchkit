@@ -13,6 +13,7 @@ describe("artifacts generation", () => {
     await withTempProject(
       {
         "src/config.ts": `${dispatchkitImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ SECRET_TOKEN: z.string().min(10) }));`,
+        "src/logger.ts": `${dispatchkitImportLine()}\nconst logger = {\n  error: (..._args: unknown[]) => undefined,\n  warn: (..._args: unknown[]) => undefined,\n  info: (..._args: unknown[]) => undefined,\n  debug: (..._args: unknown[]) => undefined,\n  custom: () => 1,\n};\nexport default defineLogger(() => ({ logger, console }));`,
         "src/modules/widget/get.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: async () => ({ ok: true }) });`,
         "src/transport/http.ts": `${dispatchkitImportLine()}\nexport default defineTransport(() => ({ ping: () => "pong" }));`,
       },
@@ -34,6 +35,7 @@ describe("artifacts generation", () => {
         expect(busTypes).toContain('"widget": {');
         expect(busTypes).toContain('"get":');
         expect(runtimeTypes).toContain("InferConfigFromDefinition<typeof AppConfigDefinition>");
+        expect(runtimeTypes).toContain("InferLoggerFromDefinition<typeof AppLoggerDefinition>");
         expect(manifest.transport).toEqual([
           // @ts-expect-error
           { key: "http", filePath: "http.ts", source: "transport" },

@@ -257,19 +257,29 @@ function createRuntimeTypesContent(options: {
   const configImport = options.discovery.configPath
     ? `import type AppConfigDefinition from "${toImportPath(options.outputPath, join(options.srcDir, options.discovery.configPath))}";\n`
     : "";
+  const loggerImport = options.discovery.loggerPath
+    ? `import type AppLoggerDefinition from "${toImportPath(options.outputPath, join(options.srcDir, options.discovery.loggerPath))}";\n`
+    : "";
 
   const configType = options.discovery.configPath
     ? "RuntimeDefaultConfig & InferConfigFromDefinition<typeof AppConfigDefinition>"
     : "RuntimeDefaultConfig";
+  const loggerType = options.discovery.loggerPath
+    ? "InferLoggerFromDefinition<typeof AppLoggerDefinition>"
+    : "LoggerLike";
+  const loggerInferImport = options.discovery.loggerPath
+    ? "InferLoggerFromDefinition, "
+    : "";
 
   return `${GENERATED_HEADER}import type { GeneratedBus, GeneratedInfra, GeneratedTransport } from "${busImport}";
-import type { InferConfigFromDefinition, LoggerLike, RuntimeDefaultConfig } from "@orria/dispatchkit";
+import type { ${loggerInferImport}InferConfigFromDefinition, LoggerLike, RuntimeDefaultConfig } from "@orria/dispatchkit";
 ${configImport}
+${loggerImport}
 export type GeneratedConfig = ${configType};
 
 export interface RuntimeContext {
   config: GeneratedConfig;
-  logger: LoggerLike;
+  logger: ${loggerType};
   infra: GeneratedInfra;
   bus: GeneratedBus;
   transport: GeneratedTransport;

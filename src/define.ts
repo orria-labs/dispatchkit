@@ -3,6 +3,7 @@ import type {
   ConfigDefinition,
   InfraDefinition,
   LoggerDefinition,
+  LoggerLike,
   OperationDefinition,
   OperationKind,
   RuntimeBus,
@@ -89,9 +90,12 @@ export function defineConfig<TSchema extends z.ZodTypeAny>(
   };
 }
 
-export function defineLogger<TConfig = RuntimeConfigShape>(
-  factory: LoggerDefinition<TConfig>["factory"],
-): LoggerDefinition<TConfig> {
+export function defineLogger<
+  TConfig = RuntimeConfigShape,
+  TLogger extends LoggerLike = LoggerLike,
+>(
+  factory: LoggerDefinition<TConfig, TLogger>["factory"],
+): LoggerDefinition<TConfig, TLogger> {
   return {
     __dispatchkitType: "logger",
     factory,
