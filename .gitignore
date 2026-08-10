@@ -27,8 +27,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
-# IntelliJ based IDEs
-.idea
+# IntelliJ based IDEs: keep only the shared project icon
+.idea/*
+!.idea/icon.svg
 
 # Finder (MacOS) folder config
 .DS_Store
