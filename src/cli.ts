@@ -25,6 +25,14 @@ function printUsage(): void {
   );
 }
 
+function requireOptionValue(args: string[], option: string): string {
+  const value = args.shift();
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${option} expects a value`);
+  }
+  return value;
+}
+
 function parseCliArgs(argv: string[]): CliArgs {
   const args = [...argv];
   const firstToken = args[0];
@@ -58,20 +66,16 @@ function parseCliArgs(argv: string[]): CliArgs {
         parsed.watch = true;
         break;
       case "--rootDir":
-        parsed.rootDir = args.shift();
+        parsed.rootDir = requireOptionValue(args, token);
         break;
       case "--srcDir":
-        parsed.srcDir = args.shift();
+        parsed.srcDir = requireOptionValue(args, token);
         break;
       case "--generatedDir":
-        parsed.generatedDir = args.shift();
+        parsed.generatedDir = requireOptionValue(args, token);
         break;
       case "--intervalMs": {
-        const raw = args.shift();
-        if (!raw) {
-          throw new Error("--intervalMs expects a numeric value");
-        }
-        const value = Number(raw);
+        const value = Number(requireOptionValue(args, token));
         if (!Number.isFinite(value) || value < 50) {
           throw new Error("--intervalMs must be a number >= 50");
         }

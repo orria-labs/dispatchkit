@@ -38,11 +38,20 @@ describe("cli", () => {
     );
   });
 
-  it("fails for unknown options", () => {
-    const result = runCommand(["bun", cliEntry, "generate", "--unknown"], repoRoot);
+  it("rejects unknown options and options without values", () => {
+    const unknownOption = runCommand(
+      ["bun", cliEntry, "generate", "--unknown"],
+      repoRoot,
+    );
+    const missingValue = runCommand(
+      ["bun", cliEntry, "generate", "--srcDir"],
+      repoRoot,
+    );
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Unknown option");
-    expect(result.stdout).toContain("Usage:");
+    expect(unknownOption.exitCode).toBe(1);
+    expect(unknownOption.stderr).toContain("Unknown option");
+    expect(unknownOption.stdout).toContain("Usage:");
+    expect(missingValue.exitCode).toBe(1);
+    expect(missingValue.stderr).toContain("--srcDir expects a value");
   });
 });

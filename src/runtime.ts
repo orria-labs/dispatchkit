@@ -431,6 +431,15 @@ async function readPackageJson(
   }
 }
 
+async function readEnvFile(path: string): Promise<Record<string, string>> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    return {};
+  }
+
+  return dotenv.parse(await file.text());
+}
+
 async function resolveConfigSchema(
   srcDir: string,
 ): Promise<z.ZodTypeAny | undefined> {
@@ -537,16 +546,22 @@ function createFallbackConsoleLogger(
 function mountGlobalConsole(runtimeConsole: ConsoleLike): void {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "console");
 
-  if (descriptor && descriptor.configurable === false) {
+  // A process can build more than one runtime (tests, workers, or multi-tenant
+  // applications). Keep this assignment replaceable so the active runtime's
+  // configured console is always used instead of permanently retaining the first.
+  if (!descriptor || descriptor.configurable) {
+    Object.defineProperty(globalThis, "console", {
+      value: runtimeConsole,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
     return;
   }
 
-  Object.defineProperty(globalThis, "console", {
-    value: runtimeConsole,
-    writable: false,
-    configurable: false,
-    enumerable: false,
-  });
+  if ("value" in descriptor && descriptor.writable) {
+    (globalThis as unknown as { console: ConsoleLike }).console = runtimeConsole;
+  }
 }
 
 async function resolveLogger(options: {
@@ -1002,9 +1017,10 @@ async function resolveRuntimeConfig(options: {
   envFile: string;
   overrides: Record<string, unknown>;
 }): Promise<RuntimeConfig> {
-  dotenv.config({ path: options.envFile, override: true });
-
-  const packageJson = await readPackageJson(options.rootDir);
+  const [packageJson, envFileConfig] = await Promise.all([
+    readPackageJson(options.rootDir),
+    readEnvFile(options.envFile),
+  ]);
   const defaults: RuntimeDefaultConfig = {
     SERVICE_NAME:
       typeof packageJson.name === "string" ? packageJson.name : "service",
@@ -1023,6 +1039,7 @@ async function resolveRuntimeConfig(options: {
   const rawConfig = {
     ...defaults,
     ...pickDefined(process.env as unknown as Record<string, unknown>),
+    ...envFileConfig,
     ...options.overrides,
   };
 

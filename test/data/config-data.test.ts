@@ -27,4 +27,33 @@ describe("data config", () => {
       },
     );
   });
+
+  it("does not leak .env values between runtime builds", async () => {
+    await withTempProject(
+      {
+        ".env": "DISPATCHKIT_ISOLATION_FLAG=first-runtime\n",
+        "src/config.ts": `${dispatchkitImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ DISPATCHKIT_ISOLATION_FLAG: z.string() }));`,
+      },
+      async (firstRoot) => {
+        const firstRuntime = await buildRuntime({
+          rootDir: firstRoot,
+          srcDir: join(firstRoot, "src"),
+        });
+        expect(firstRuntime.config.DISPATCHKIT_ISOLATION_FLAG).toBe("first-runtime");
+      },
+    );
+
+    await withTempProject(
+      {
+        "src/config.ts": `${dispatchkitImportLine()}\nimport { z } from "zod";\nexport default defineConfig(z.object({ DISPATCHKIT_ISOLATION_FLAG: z.string().default("second-runtime") }));`,
+      },
+      async (secondRoot) => {
+        const secondRuntime = await buildRuntime({
+          rootDir: secondRoot,
+          srcDir: join(secondRoot, "src"),
+        });
+        expect(secondRuntime.config.DISPATCHKIT_ISOLATION_FLAG).toBe("second-runtime");
+      },
+    );
+  });
 });

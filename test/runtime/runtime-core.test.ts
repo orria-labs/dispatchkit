@@ -18,8 +18,32 @@ describe("runtime logger", () => {
 
         expect(runtime.logger).toBeDefined();
         expect(typeof runtime.logger.info).toBe("function");
-        expect(descriptor?.configurable).toBe(false);
-        expect(descriptor?.writable).toBe(false);
+        expect(descriptor?.configurable).toBe(true);
+        expect(descriptor?.writable).toBe(true);
+      },
+    );
+  });
+
+  it("replaces the mounted console when a new runtime is built", async () => {
+    const customConsole = {
+      log: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+      debug: () => undefined,
+      trace: () => undefined,
+    } as unknown as Console;
+
+    await withTempProject(
+      {
+        "src/logger.ts": `${dispatchkitImportLine()}\nconst logger = { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined };\nexport default defineLogger(() => ({ logger, console: globalThis.customConsole }));`,
+      },
+      async (rootDir) => {
+        (globalThis as typeof globalThis & { customConsole?: typeof customConsole }).customConsole = customConsole;
+        await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
+
+        expect(globalThis.console).toBe(customConsole);
+        delete (globalThis as typeof globalThis & { customConsole?: typeof customConsole }).customConsole;
       },
     );
   });
