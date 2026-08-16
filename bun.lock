@@ -5,14 +5,14 @@
     "": {
       "name": "@orria/dispatchkit",
       "dependencies": {
-        "dotenv": "latest",
+        "dotenv": "^17.4.2",
       },
       "devDependencies": {
-        "@types/bun": "latest",
-        "zod": "latest",
+        "@types/bun": "^1.3.14",
+        "zod": "^4.4.3",
       },
       "peerDependencies": {
-        "typescript": "latest",
+        "typescript": "^7.0.2",
         "zod": "^4.4.3",
       },
     },
