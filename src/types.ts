@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 export type OperationKind = "query" | "mutation" | "action";
 
@@ -17,14 +17,26 @@ export type ConsoleLike = Pick<
   "log" | "info" | "warn" | "error" | "debug" | "trace"
 >;
 
-type InferSchema<TSchema extends z.ZodTypeAny | undefined, TFallback> =
-  TSchema extends z.ZodTypeAny ? z.infer<TSchema> : TFallback;
+export type Schema = StandardSchemaV1;
 
-export type BusMethod<TInput, TReturn> = {
-  (input: TInput): Promise<TReturn>;
-  $unsafe: (input: TInput) => Promise<TReturn>;
-  $input: z.ZodTypeAny | undefined;
-  $return: z.ZodTypeAny | undefined;
+export type SchemaInput<TSchema, TFallback = unknown> =
+  TSchema extends StandardSchemaV1 ? StandardSchemaV1.InferInput<TSchema> : TFallback;
+
+export type SchemaOutput<TSchema, TFallback = unknown> =
+  TSchema extends StandardSchemaV1 ? StandardSchemaV1.InferOutput<TSchema> : TFallback;
+
+export type BusMethod<
+  TInput,
+  TReturn,
+  TUnsafeInput = TInput,
+  TUnsafeReturn = TReturn,
+  TInputSchema extends Schema | undefined = Schema | undefined,
+  TReturnSchema extends Schema | undefined = Schema | undefined,
+> = {
+  (...args: undefined extends TInput ? [input?: TInput] : [input: TInput]): Promise<TReturn>;
+  $unsafe: (...args: undefined extends TUnsafeInput ? [input?: TUnsafeInput] : [input: TUnsafeInput]) => Promise<TUnsafeReturn>;
+  $input: TInputSchema;
+  $return: TReturnSchema;
 };
 
 export interface BusNamespace {
@@ -101,10 +113,14 @@ export interface ModuleContext<
   bus: TBus;
 }
 
+export interface RuntimeLifecycleContext {
+  onDispose(dispose: () => void | Promise<void>): void;
+}
+
 export interface InfraContext<
   TConfig = RuntimeConfigShape,
   TLogger = RuntimeLoggerShape,
-> {
+> extends RuntimeLifecycleContext {
   config: TConfig;
   logger: TLogger;
 }
@@ -119,6 +135,12 @@ export interface TransportContext<
   bus: TBus;
 }
 
+export interface TransportFactoryContext<
+  TConfig = RuntimeConfigShape,
+  TBus = RuntimeBus,
+  TLogger = RuntimeLoggerShape,
+> extends TransportContext<TConfig, TBus, TLogger>, RuntimeLifecycleContext {}
+
 export type ModuleHandlerContext<
   TInput = unknown,
   TConfig = RuntimeConfigShape,
@@ -131,12 +153,13 @@ export type ModuleHandlerContext<
 
 export interface OperationDefinition<
   TKind extends OperationKind,
-  TInputSchema extends z.ZodTypeAny | undefined = undefined,
-  TReturnSchema extends z.ZodTypeAny | undefined = undefined,
+  TInputSchema extends Schema | undefined = undefined,
+  TReturnSchema extends Schema | undefined = undefined,
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
   TLogger = RuntimeLoggerShape,
+  TResult = SchemaInput<TReturnSchema>,
 > {
   readonly __dispatchkitType: "operation";
   readonly kind: TKind;
@@ -144,28 +167,39 @@ export interface OperationDefinition<
   readonly return?: TReturnSchema;
   readonly handler: (
     ctx: ModuleHandlerContext<
-      InferSchema<TInputSchema, unknown>,
+      SchemaOutput<TInputSchema>,
       TConfig,
       TInfra,
       TBus,
       TLogger
     >,
-  ) =>
-    | Promise<InferSchema<TReturnSchema, unknown>>
-    | InferSchema<TReturnSchema, unknown>;
+  ) => TResult | Promise<TResult>;
 }
 
 export type OperationInput<T> =
-  T extends OperationDefinition<OperationKind, infer TInput, any, any, any, any, any>
-  ? InferSchema<TInput, unknown>
-  : never;
+  T extends { readonly input?: infer TSchema } ? SchemaInput<TSchema> : never;
 
 export type OperationReturn<T> =
-  T extends OperationDefinition<OperationKind, any, infer TReturn, any, any, any, any>
-  ? InferSchema<TReturn, unknown>
-  : never;
+  T extends { readonly return?: infer TSchema; readonly handler: (...args: any[]) => infer TResult }
+    ? SchemaOutput<TSchema, Awaited<TResult>>
+    : never;
 
-export interface ConfigDefinition<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
+export type OperationBusMethod<
+  T extends {
+    readonly input?: Schema;
+    readonly return?: Schema;
+    readonly handler: (...args: any[]) => any;
+  },
+> = BusMethod<
+  OperationInput<T>,
+  OperationReturn<T>,
+  Parameters<T["handler"]>[0]["input"],
+  Awaited<ReturnType<T["handler"]>>,
+  T["input"],
+  T["return"]
+>;
+
+export interface ConfigDefinition<TSchema extends Schema = Schema> {
   readonly __dispatchkitType: "config";
   readonly schema: TSchema;
 }
@@ -180,7 +214,7 @@ export interface LoggerDefinition<
 
 export interface InfraDefinition<
   TConfig = RuntimeConfigShape,
-  TResult = RuntimeInfraShape,
+  TResult = unknown,
   TLogger = RuntimeLoggerShape,
 > {
   readonly __dispatchkitType: "infra";
@@ -195,7 +229,7 @@ export interface TransportDefinition<
 > {
   readonly __dispatchkitType: "transport";
   readonly factory:
-    (ctx: TransportContext<TConfig, TBus, TLogger>) => TResult | Promise<TResult>;
+    (ctx: TransportFactoryContext<TConfig, TBus, TLogger>) => TResult | Promise<TResult>;
   readonly options?: TransportDefinitionOptions;
 }
 
@@ -223,6 +257,7 @@ export interface Runtime<
   infra: TInfra;
   bus: TBus;
   transport: TTransport;
+  dispose(): Promise<void>;
 }
 
 export type RuntimeContext = Runtime;
@@ -233,6 +268,8 @@ export interface BuildRuntimeOptions {
   generatedDir?: string;
   envFile?: string;
   config?: Record<string, unknown>;
+  generateArtifacts?: boolean;
+  mountGlobal?: boolean;
   [key: string]: unknown;
 }
 
@@ -250,7 +287,7 @@ export type InferTransportModule<T> =
   : never;
 
 export type InferConfigFromDefinition<T> =
-  T extends ConfigDefinition<infer TSchema> ? z.infer<TSchema> : {};
+  T extends ConfigDefinition<infer TSchema> ? SchemaOutput<TSchema> : {};
 
 export type InferLoggerFromDefinition<T> =
   T extends LoggerDefinition<any, infer TLogger> ? TLogger : LoggerLike;

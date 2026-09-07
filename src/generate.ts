@@ -1,7 +1,8 @@
-import { mkdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { discoverRuntimeFiles, resolveTransportKey } from "./discovery.ts";
 import { generateArtifacts } from "./typegen.ts";
+import { createModuleClassifier } from "./classify.ts";
 import type {
   DiscoveredTransport,
   DiscoveryResult,
@@ -40,56 +41,6 @@ function sortTransport(modules: DiscoveredTransport[]): DiscoveredTransport[] {
   );
 }
 
-function detectDefineBindingNames(
-  source: string,
-  factoryName: "defineInfra" | "defineTransport",
-): Set<string> {
-  const names = new Set<string>();
-  const pattern = new RegExp(
-    `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${factoryName}\\s*\\(`,
-    "g",
-  );
-
-  for (const match of source.matchAll(pattern)) {
-    const name = match[1];
-    if (name) {
-      names.add(name);
-    }
-  }
-
-  return names;
-}
-
-function classifyInfraModuleSource(
-  source: string,
-): "infra" | "transport" | "unknown" {
-  if (/\bexport\s+default\s+defineTransport\s*\(/m.test(source)) {
-    return "transport";
-  }
-  if (/\bexport\s+default\s+defineInfra\s*\(/m.test(source)) {
-    return "infra";
-  }
-
-  const transportBindings = detectDefineBindingNames(source, "defineTransport");
-  const infraBindings = detectDefineBindingNames(source, "defineInfra");
-  const defaultExportMatch = source.match(
-    /\bexport\s+default\s+([A-Za-z_$][\w$]*)\s*;?/m,
-  );
-  const exportedBinding = defaultExportMatch?.[1];
-
-  if (!exportedBinding) {
-    return "unknown";
-  }
-  if (transportBindings.has(exportedBinding)) {
-    return "transport";
-  }
-  if (infraBindings.has(exportedBinding)) {
-    return "infra";
-  }
-
-  return "unknown";
-}
-
 async function discoverTransportFromInfra(options: {
   srcDir: string;
   infraFiles: string[];
@@ -99,11 +50,11 @@ async function discoverTransportFromInfra(options: {
 }> {
   const infraModules: string[] = [];
   const transportModules: DiscoveredTransport[] = [];
+  const classify = createModuleClassifier();
 
   for (const filePath of options.infraFiles) {
     const absolutePath = join(options.srcDir, "infra", filePath);
-    const source = await Bun.file(absolutePath).text();
-    const classification = classifyInfraModuleSource(source);
+    const classification = await classify(absolutePath);
 
     if (classification === "transport") {
       transportModules.push({
@@ -134,7 +85,7 @@ function assertTransportNoCollisions(modules: DiscoveredTransport[]): void {
   }
 }
 
-async function discoverForArtifacts(srcDir: string): Promise<DiscoveryResult> {
+export async function discoverForArtifacts(srcDir: string): Promise<DiscoveryResult> {
   const discovery = await discoverRuntimeFiles(srcDir);
   const { infraModules, transportModules } = await discoverTransportFromInfra({
     srcDir,
@@ -160,32 +111,25 @@ function resolvePaths(options: GenerateRuntimeOptions): {
 } {
   const rootDir = options.rootDir ? resolve(options.rootDir) : process.cwd();
   const srcDir = options.srcDir
-    ? resolve(options.srcDir)
+    ? resolve(rootDir, options.srcDir)
     : join(rootDir, "src");
   const generatedDir = options.generatedDir
-    ? resolve(options.generatedDir)
+    ? resolve(rootDir, options.generatedDir)
     : join(srcDir, "generated", "runtime");
 
   return { rootDir, srcDir, generatedDir };
 }
 
-async function collectWatchFingerprint(srcDir: string): Promise<string> {
+async function collectWatchFingerprint(srcDir: string, generatedDir: string): Promise<string> {
+  if (!existsSync(srcDir)) return "";
   const files = new Set<string>();
-  const patterns = [
-    "modules/**/*.ts",
-    "infra/**/*.ts",
-    "transport/**/*.ts",
-    "config.ts",
-    "logger.ts",
-  ];
-
-  for (const pattern of patterns) {
-    for await (const path of new Bun.Glob(pattern).scan({ cwd: srcDir })) {
-      if (path.endsWith(".d.ts")) {
-        continue;
-      }
-      files.add(normalizeSeparators(path));
-    }
+  for await (const path of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan({ cwd: srcDir })) {
+    const normalized = normalizeSeparators(path);
+    const fromGenerated = normalizeSeparators(relative(generatedDir, join(srcDir, path)));
+    if (/\.d\.(?:ts|mts|cts)$/.test(normalized)
+      || normalized.split("/").some((part) => part === "node_modules" || part === ".git")
+      || (fromGenerated !== ".." && !fromGenerated.startsWith("../") && !isAbsolute(fromGenerated))) continue;
+    files.add(normalized);
   }
 
   const rows = [...files].sort((left, right) => left.localeCompare(right));
@@ -194,10 +138,9 @@ async function collectWatchFingerprint(srcDir: string): Promise<string> {
   for (const relativePath of rows) {
     const absolutePath = join(srcDir, relativePath);
     try {
-      const stat = statSync(absolutePath);
-      fingerprintRows.push(
-        `${relativePath}:${stat.size}:${Math.floor(stat.mtimeMs)}:${Math.floor(stat.ctimeMs)}`,
-      );
+      const hasher = new Bun.CryptoHasher("sha256");
+      hasher.update(await Bun.file(absolutePath).arrayBuffer());
+      fingerprintRows.push(JSON.stringify([relativePath, hasher.digest("hex")]));
     } catch {
       fingerprintRows.push(`${relativePath}:deleted`);
     }
@@ -231,31 +174,35 @@ export async function watchRuntime(
   options: WatchRuntimeOptions = {},
 ): Promise<void> {
   const intervalMs = options.intervalMs ?? 400;
+  if (!Number.isFinite(intervalMs) || intervalMs < 50) {
+    throw new Error("DISPATCHKIT_WATCH_INVALID_INTERVAL: intervalMs must be a number >= 50");
+  }
   const onInfo = options.onInfo ?? (() => { });
   const onError = options.onError ?? (() => { });
 
+  const paths = resolvePaths(options);
+  let lastFingerprint = await collectWatchFingerprint(paths.srcDir, paths.generatedDir);
   const initial = await generateRuntime(options);
   onInfo(
     `[dispatchkit] generated runtime artifacts: ${initial.discovery.operations.length} ops, ${initial.discovery.infra.length} infra modules, ${initial.discovery.transport.length} transport modules`,
   );
   onInfo(`[dispatchkit] watching ${initial.srcDir} every ${intervalMs}ms`);
 
-  let lastFingerprint = await collectWatchFingerprint(initial.srcDir);
   let isGenerating = false;
   const timer = setInterval(async () => {
     if (isGenerating) {
       return;
     }
 
+    isGenerating = true;
     try {
-      const nextFingerprint = await collectWatchFingerprint(initial.srcDir);
+      const nextFingerprint = await collectWatchFingerprint(initial.srcDir, initial.generatedDir);
       if (nextFingerprint === lastFingerprint) {
         return;
       }
 
-      isGenerating = true;
       const next = await generateRuntime(options);
-      lastFingerprint = await collectWatchFingerprint(next.srcDir);
+      lastFingerprint = nextFingerprint;
       onInfo(
         `[dispatchkit] regenerated runtime artifacts: ${next.discovery.operations.length} ops, ${next.discovery.infra.length} infra modules, ${next.discovery.transport.length} transport modules`,
       );

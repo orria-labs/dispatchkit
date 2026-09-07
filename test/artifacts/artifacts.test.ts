@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildRuntime, generateRuntime } from "../../src/index.ts";
+import { parse } from "@babel/parser";
 import {
   createTempProject,
   dispatchkitImportLine,
+  runtimeImport,
   withTempProject,
 } from "../test-helpers.ts";
 
@@ -67,6 +69,72 @@ describe("artifacts generation", () => {
         expect(manifest.transport).toEqual([
           { key: "http", filePath: "http.ts", source: "infra" },
         ]);
+      },
+    );
+  });
+
+  it("follows aliases, namespaces, const bindings and local re-exports without executing modules", async () => {
+    await withTempProject(
+      {
+        "src/infra/alias.ts": `import { defineTransport as transport } from ${JSON.stringify(runtimeImport)};\nthrow new Error("must not execute");\nexport default transport(() => ({}));`,
+        "src/infra/namespace.ts": `import * as kit from ${JSON.stringify(runtimeImport)};\nconst value = kit.defineTransport(() => ({}));\nexport { value as default };`,
+        "src/infra/generic.ts": `import { defineTransport as transport } from ${JSON.stringify(runtimeImport)};\nconst value = transport<{}, {}, {}>(() => ({}));\nconst alias = (value as typeof value);\nexport default alias satisfies typeof value;`,
+        "src/shared/factories.ts": `export { defineTransport as serve } from ${JSON.stringify(runtimeImport)};`,
+        "src/shared/server.ts": `import { serve } from "./factories.ts";\nexport const server = serve(() => ({}));`,
+        "src/infra/reexport.ts": `export { server as default } from "../shared/server.ts";`,
+        "src/shared/default.ts": `export { server as default } from "./server.ts";`,
+        "src/infra/default-import.ts": `import server from "../shared/default.ts";\nexport default server;`,
+        "src/infra/comment.ts": `${dispatchkitImportLine()}\n// export default defineTransport(() => ({}));\nconst text = "export default defineTransport(() => ({}))";\nexport default defineInfra(() => ({ text }));`,
+      },
+      async (rootDir) => {
+        const result = await generateRuntime({ rootDir });
+        expect(result.discovery.infra).toEqual(["comment.ts"]);
+        expect(result.discovery.transport.map((module) => module.key)).toEqual([
+          "alias", "default-import", "generic", "namespace", "reexport",
+        ]);
+      },
+    );
+  });
+
+  it("reports definitions that cannot be classified instead of generating an incorrect infra type", async () => {
+    await withTempProject(
+      {
+        "src/infra/server.ts": `${dispatchkitImportLine()}\nfunction build() { return defineTransport(() => ({})); }\nexport default build();`,
+      },
+      async (rootDir) => {
+        await expect(generateRuntime({ rootDir })).rejects.toThrow("DISPATCHKIT_DISCOVERY_UNKNOWN_DEFINITION");
+      },
+    );
+  });
+
+  it("rejects grouped collisions before generating misleading declarations", async () => {
+    await withTempProject(
+      {
+        "src/modules/widget.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: () => 1 });`,
+        "src/modules/widget/get.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: () => 2 });`,
+      },
+      async (rootDir) => {
+        await expect(generateRuntime({ rootDir })).rejects.toThrow("DISPATCHKIT_BUS_GROUP_COLLISION");
+        await expect(buildRuntime({ rootDir })).rejects.toThrow("DISPATCHKIT_BUS_GROUP_COLLISION");
+      },
+    );
+  });
+
+  it("resolves relative paths from rootDir and escapes generated import specifiers", async () => {
+    await withTempProject(
+      {
+        'app/modules/quote"name.query.ts': `${dispatchkitImportLine()}\nexport default defineQuery({ handler: () => 1 });`,
+        'app/infra/quote"infra.ts': `${dispatchkitImportLine()}\nexport default defineInfra(() => ({}));`,
+      },
+      async (rootDir) => {
+        const generated = await generateRuntime({ rootDir, srcDir: "app", generatedDir: "types" });
+        expect(generated.srcDir).toBe(join(rootDir, "app"));
+        expect(generated.generatedDir).toBe(join(rootDir, "types"));
+        const source = readFileSync(join(generated.generatedDir, "bus.d.ts"), "utf8");
+        const ast = parse(source, { sourceType: "module", plugins: ["typescript"] });
+        const specifiers = ast.program.body.flatMap((node) => node.type === "ImportDeclaration" ? [node.source.value] : []);
+        expect(specifiers).toContain('../app/modules/quote"name.query');
+        expect(specifiers).toContain('../app/infra/quote"infra');
       },
     );
   });

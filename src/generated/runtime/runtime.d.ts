@@ -5,6 +5,7 @@ import type { GeneratedBus, GeneratedInfra, GeneratedTransport } from "./bus.d.t
 export type GeneratedConfig = RuntimeDefaultConfig;
 
 export interface RuntimeContext {
+  dispose(): Promise<void>;
   config: GeneratedConfig;
   logger: LoggerLike;
   infra: GeneratedInfra;

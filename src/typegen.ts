@@ -167,7 +167,7 @@ function createBusTypesContent(
   discovery: DiscoveryResult,
 ): string {
   const imports: string[] = [
-    `import type { BusMethod, OperationInput, OperationReturn, InferInfraModule, InferTransportModule } from "@orria/dispatchkit";`,
+    `import type { OperationBusMethod, InferInfraModule, InferTransportModule } from "@orria/dispatchkit";`,
   ];
 
   const methodTypes = new Map<string, string>();
@@ -175,11 +175,11 @@ function createBusTypesContent(
   discovery.operations.forEach((operation, index) => {
     const alias = `Operation${index}`;
     imports.push(
-      `import type ${alias} from "${toImportPath(outputPath, join(srcDir, "modules", operation.filePath))}";`,
+      `import type ${alias} from ${JSON.stringify(toImportPath(outputPath, join(srcDir, "modules", operation.filePath)))};`,
     );
     methodTypes.set(
       `${operation.kind}:${operation.operationName}`,
-      `BusMethod<OperationInput<typeof ${alias}>, OperationReturn<typeof ${alias}>>`,
+      `OperationBusMethod<typeof ${alias}>`,
     );
   });
 
@@ -188,7 +188,7 @@ function createBusTypesContent(
     const alias = `Infra${index}`;
     infraAliases.push({ alias, key: resolveTransportKey(filePath), filePath });
     imports.push(
-      `import type ${alias} from "${toImportPath(outputPath, join(srcDir, "infra", filePath))}";`,
+      `import type ${alias} from ${JSON.stringify(toImportPath(outputPath, join(srcDir, "infra", filePath)))};`,
     );
   });
 
@@ -198,7 +198,7 @@ function createBusTypesContent(
     transportAliases.push({ alias, key: module.key });
     const layerDir = module.source === "infra" ? "infra" : "transport";
     imports.push(
-      `import type ${alias} from "${toImportPath(outputPath, join(srcDir, layerDir, module.filePath))}";`,
+      `import type ${alias} from ${JSON.stringify(toImportPath(outputPath, join(srcDir, layerDir, module.filePath)))};`,
     );
   });
 
@@ -255,10 +255,10 @@ function createRuntimeTypesContent(options: {
   );
 
   const configImport = options.discovery.configPath
-    ? `import type AppConfigDefinition from "${toImportPath(options.outputPath, join(options.srcDir, options.discovery.configPath))}";\n`
+    ? `import type AppConfigDefinition from ${JSON.stringify(toImportPath(options.outputPath, join(options.srcDir, options.discovery.configPath)))};\n`
     : "";
   const loggerImport = options.discovery.loggerPath
-    ? `import type AppLoggerDefinition from "${toImportPath(options.outputPath, join(options.srcDir, options.discovery.loggerPath))}";\n`
+    ? `import type AppLoggerDefinition from ${JSON.stringify(toImportPath(options.outputPath, join(options.srcDir, options.discovery.loggerPath)))};\n`
     : "";
 
   const configType = options.discovery.configPath
@@ -271,13 +271,14 @@ function createRuntimeTypesContent(options: {
     ? "InferLoggerFromDefinition, "
     : "";
 
-  return `${GENERATED_HEADER}import type { GeneratedBus, GeneratedInfra, GeneratedTransport } from "${busImport}";
+  return `${GENERATED_HEADER}import type { GeneratedBus, GeneratedInfra, GeneratedTransport } from ${JSON.stringify(busImport)};
 import type { ${loggerInferImport}InferConfigFromDefinition, LoggerLike, RuntimeDefaultConfig } from "@orria/dispatchkit";
 ${configImport}
 ${loggerImport}
 export type GeneratedConfig = ${configType};
 
 export interface RuntimeContext {
+  dispose(): Promise<void>;
   config: GeneratedConfig;
   logger: ${loggerType};
   infra: GeneratedInfra;

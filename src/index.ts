@@ -17,9 +17,16 @@ export type {
   GeneratedQueryBus,
   GeneratedTransport,
 } from "./generated/runtime/index.ts";
+export { StandardSchemaError } from "./validation.ts";
+export type { StandardSchemaV1 } from "@standard-schema/spec";
 export { buildRuntime, getModuleCtx, getTransportCtx } from "./runtime.ts";
 
 export type {
+  Schema,
+  SchemaInput,
+  SchemaOutput,
+  OperationBusMethod,
+  RuntimeLifecycleContext,
   BuildRuntimeOptions,
   BusMethod,
   BusNamespace,
@@ -52,6 +59,7 @@ export type {
   RuntimeTransportShape,
   Simplify,
   TransportContext,
+  TransportFactoryContext,
   TransportDefinition,
   UnionToIntersection,
 } from "./types.ts";

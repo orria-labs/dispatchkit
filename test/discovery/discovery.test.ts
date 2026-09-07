@@ -56,4 +56,31 @@ describe("naming", () => {
       },
     );
   });
+
+  it("rejects overlapping flat operations and grouped namespaces", async () => {
+    for (const paths of [
+      ["widget.query.ts", "widget/get.query.ts"],
+      ["widget/get.query.ts", "widget/get/detail.query.ts"],
+      ["widget/get.query.ts", "widget-get/detail.query.ts"],
+    ]) {
+      await withTempProject(
+        Object.fromEntries(paths.map((path) => [`src/modules/${path}`, "export default {};"])),
+        async (rootDir) => {
+          await expect(discoverRuntimeFiles(join(rootDir, "src"))).rejects.toThrow(
+            "DISPATCHKIT_BUS_GROUP_COLLISION",
+          );
+        },
+      );
+    }
+  });
+
+  it("allows prototype property names as operation namespaces", async () => {
+    await withTempProject(
+      { "src/modules/constructor/has-own-property.query.ts": "export default {};" },
+      async (rootDir) => {
+        const discovery = await discoverRuntimeFiles(join(rootDir, "src"));
+        expect(discovery.operations[0]?.operationSegments).toEqual(["constructor", "hasOwnProperty"]);
+      },
+    );
+  });
 });

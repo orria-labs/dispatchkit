@@ -1,15 +1,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import dotenv from "dotenv";
-import { z } from "zod";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { assertStandardSchema, StandardSchemaError, validateSchema } from "./validation.ts";
+import { createLifecycle } from "./lifecycle.ts";
 import {
-  discoverRuntimeFiles,
   resolveTransportKey,
   toSourceFileFromRelative,
 } from "./discovery.ts";
 import { generateArtifacts } from "./typegen.ts";
+import { discoverForArtifacts } from "./generate.ts";
 import type {
   BuildRuntimeOptions,
   BusMethod,
@@ -32,6 +34,7 @@ import type {
   RuntimeInfraShape,
   RuntimeTransportShape,
   TransportContext,
+  TransportFactoryContext,
   TransportDefinition,
   TransportDefinitionOptions,
   TransportSource,
@@ -87,15 +90,30 @@ const transportCtxAccessGuardStorage = new AsyncLocalStorage<
   TransportCtxAccessGuard | undefined
 >();
 const callFrameStorage = new AsyncLocalStorage<CallFrame[]>();
+type BuildScope = { runtime?: InternalRuntime; srcDir?: string };
+type ImportScope = {
+  build?: BuildScope;
+  module?: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase>;
+  transport?: TransportContext<RuntimeConfig, RuntimeBusBase>;
+  guard?: TransportCtxAccessGuard;
+};
+const buildContextStorage = new AsyncLocalStorage<BuildScope>();
+const disposedRuntimes = new WeakSet<InternalRuntime>();
 const RUNTIME_GLOBAL_STATE_KEY = Symbol.for(
-  "dispatchkit.runtime.globalState.v1",
+  "dispatchkit.runtime.globalState.v2",
 );
 
 type RuntimeGlobalState = {
+  baseConsole: ConsoleLike;
+  importQueue: Promise<void>;
+  importScope: ImportScope | undefined;
+  transportOriginals: WeakMap<object, object>;
   moduleContextStorage: typeof moduleContextStorage;
   transportContextStorage: typeof transportContextStorage;
   transportCtxAccessGuardStorage: typeof transportCtxAccessGuardStorage;
   callFrameStorage: typeof callFrameStorage;
+  buildContextStorage: typeof buildContextStorage;
+  disposedRuntimes: typeof disposedRuntimes;
   activeRuntime: InternalRuntime | undefined;
   activeTransportCtxAccessGuard: TransportCtxAccessGuard | undefined;
 };
@@ -107,10 +125,16 @@ function getRuntimeGlobalState(): RuntimeGlobalState {
 
   if (!globalState[RUNTIME_GLOBAL_STATE_KEY]) {
     globalState[RUNTIME_GLOBAL_STATE_KEY] = {
+      baseConsole: globalThis.console,
+      importQueue: Promise.resolve(),
+      importScope: undefined,
+      transportOriginals: new WeakMap(),
       moduleContextStorage,
       transportContextStorage,
       transportCtxAccessGuardStorage,
       callFrameStorage,
+      buildContextStorage,
+      disposedRuntimes,
       activeRuntime: undefined,
       activeTransportCtxAccessGuard: undefined,
     };
@@ -139,13 +163,6 @@ const LOG_LEVEL_INDEX = LOG_LEVELS.reduce<Record<LogLevel, number>>(
   {} as Record<LogLevel, number>,
 );
 
-const RuntimeSchema = z.object({
-  SERVICE_NAME: z.string(),
-  SERVICE_DESCRIPTION: z.string(),
-  SERVICE_VERSION: z.string(),
-  LOG_LEVEL: z.enum(LOG_LEVELS),
-  NODE_ENV: z.enum(["development", "production"]),
-});
 
 const RESERVED_RUNTIME_OPTION_KEYS = new Set([
   "rootDir",
@@ -153,10 +170,20 @@ const RESERVED_RUNTIME_OPTION_KEYS = new Set([
   "generatedDir",
   "envFile",
   "config",
+  "generateArtifacts",
+  "mountGlobal",
 ]);
 
 function normalizeSeparators(value: string): string {
   return value.replace(/\\/g, "/");
+}
+
+function resolvePhysicalPath(value: string): string {
+  try {
+    return realpathSync(value);
+  } catch {
+    return resolve(value);
+  }
 }
 
 const RUNTIME_FILE_PATH = normalizeSeparators(fileURLToPath(import.meta.url));
@@ -247,14 +274,14 @@ function buildTransportCtxAccessGuard(options: {
   }
 
   return {
-    srcDir: resolve(options.srcDir),
+    srcDir: resolvePhysicalPath(options.srcDir),
     patterns: normalizedPatterns,
     globs: normalizedPatterns.map((pattern) => new Bun.Glob(pattern)),
   };
 }
 
 function resolveCallerFilePath(
-  skipper: (...args: unknown[]) => unknown,
+  skipper: (...args: any[]) => unknown,
 ): string | undefined {
   if (typeof Error.captureStackTrace !== "function") {
     return undefined;
@@ -301,7 +328,7 @@ function isTransportCtxCallAllowed(options: {
     return true;
   }
 
-  const callerPath = resolve(options.callerFilePath);
+  const callerPath = resolvePhysicalPath(options.callerFilePath);
   const normalizedRelative = normalizeSeparators(
     relative(options.guard.srcDir, callerPath),
   );
@@ -334,7 +361,7 @@ function toDisplayPathFromSrc(options: {
   }
 
   const normalizedRelative = normalizeSeparators(
-    relative(options.srcDir, resolve(options.filePath)),
+    relative(options.srcDir, resolvePhysicalPath(options.filePath)),
   );
 
   if (
@@ -377,13 +404,37 @@ function createRuntimeError(options: {
 }
 
 function toImportUrl(path: string): string {
-  const file = pathToFileURL(path).href;
-  return `${file}?dispatchkit=${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return pathToFileURL(path).href;
 }
 
 async function importDefault(path: string): Promise<unknown> {
-  const mod = await import(toImportUrl(path));
-  return mod.default;
+  // Bun can evaluate dynamically imported modules outside AsyncLocalStorage.
+  // Serialize evaluation and expose a temporary scope only to files in this app.
+  const scope: ImportScope = {
+    build: runtimeGlobalState.buildContextStorage.getStore(),
+    module: runtimeGlobalState.moduleContextStorage.getStore(),
+    transport: runtimeGlobalState.transportContextStorage.getStore(),
+    guard: runtimeGlobalState.transportCtxAccessGuardStorage.getStore(),
+  };
+  const previous = runtimeGlobalState.importQueue;
+  let release!: () => void;
+  runtimeGlobalState.importQueue = new Promise<void>(resolve => { release = resolve; });
+  await previous;
+  runtimeGlobalState.importScope = scope;
+  try {
+    const mod = await import(toImportUrl(path));
+    return mod.default;
+  } finally {
+    runtimeGlobalState.importScope = undefined;
+    release();
+  }
+}
+
+function getImportScope(callerFilePath: string | undefined): ImportScope | undefined {
+  const scope = runtimeGlobalState.importScope;
+  if (!scope?.build?.srcDir || !callerFilePath) return undefined;
+  const path = normalizeSeparators(relative(resolvePhysicalPath(scope.build.srcDir), resolvePhysicalPath(callerFilePath)));
+  return path === ".." || path.startsWith("../") ? undefined : scope;
 }
 
 function pickDefined(input: Record<string, unknown>): Record<string, unknown> {
@@ -442,7 +493,7 @@ async function readEnvFile(path: string): Promise<Record<string, string>> {
 
 async function resolveConfigSchema(
   srcDir: string,
-): Promise<z.ZodTypeAny | undefined> {
+): Promise<StandardSchemaV1 | undefined> {
   const configFilePath = join(srcDir, "config.ts");
   const exists = await Bun.file(configFilePath).exists();
 
@@ -459,6 +510,7 @@ async function resolveConfigSchema(
     );
   }
 
+  assertStandardSchema(configDefinition.schema);
   return configDefinition.schema;
 }
 
@@ -475,7 +527,7 @@ function wrapValidationError(options: {
 }
 
 function createConsoleBindings(logger: LoggerLike): ConsoleLike {
-  const fallback = globalThis.console;
+  const fallback = runtimeGlobalState.baseConsole;
 
   const call =
     (
@@ -506,7 +558,7 @@ function createConsoleBindings(logger: LoggerLike): ConsoleLike {
 function createFallbackConsoleLogger(
   logLevel: RuntimeDefaultConfig["LOG_LEVEL"],
 ): LoggerLike {
-  const fallbackConsole = globalThis.console;
+  const fallbackConsole = runtimeGlobalState.baseConsole;
 
   const shouldLog = (level: RuntimeDefaultConfig["LOG_LEVEL"]): boolean => {
     if (logLevel === "silent") {
@@ -633,7 +685,7 @@ function assignBusEntry(options: {
 }): void {
   const { section, operationName, segments, method, kind } = options;
 
-  if (section[operationName] !== undefined) {
+  if (Object.hasOwn(section, operationName)) {
     throw new Error(
       `DISPATCHKIT_BUS_NAME_COLLISION: Duplicate ${kind} operation key "${operationName}"`,
     );
@@ -648,10 +700,10 @@ function assignBusEntry(options: {
   let current = section;
   for (let index = 0; index < segments.length - 1; index += 1) {
     const key = segments[index]!;
-    const existing = current[key];
+    const existing = Object.hasOwn(current, key) ? current[key] : undefined;
 
     if (existing === undefined) {
-      const next: BusNamespace = {};
+      const next: BusNamespace = Object.create(null);
       current[key] = next;
       current = next;
       continue;
@@ -667,8 +719,7 @@ function assignBusEntry(options: {
   }
 
   const leaf = segments[segments.length - 1]!;
-  const leafValue = current[leaf];
-  if (leafValue !== undefined) {
+  if (Object.hasOwn(current, leaf)) {
     throw new Error(
       `DISPATCHKIT_BUS_GROUP_COLLISION: Duplicate grouped key "${kind}.${segments.join(".")}"`,
     );
@@ -708,42 +759,25 @@ function createBusMethod(options: {
       bus: runtime.bus,
     };
 
-    let input = rawInput;
-    if (!unsafe && operation.definition.input) {
-      try {
-        input = await operation.definition.input.parseAsync(rawInput);
-      } catch (error) {
-        throw wrapValidationError({
-          operation: operation.name,
-          phase: "input",
-          cause: error,
-        });
-      }
+    if (runtimeGlobalState.disposedRuntimes.has(runtime)) {
+      throw new Error("DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal");
     }
-
-    const nextStack = [
-      ...stack,
-      { kind: operation.kind, name: operation.name } satisfies CallFrame,
-    ];
-    const result = await runtimeGlobalState.callFrameStorage.run(nextStack, () =>
-      runtimeGlobalState.moduleContextStorage.run(moduleCtx, () =>
-        operation.definition.handler({ ...moduleCtx, input }),
-      ),
+    const nextStack = [...stack, { kind: operation.kind, name: operation.name } satisfies CallFrame];
+    return runtimeGlobalState.callFrameStorage.run(nextStack, () =>
+      runtimeGlobalState.moduleContextStorage.run(moduleCtx, async () => {
+        let input = rawInput;
+        if (!unsafe && operation.definition.input) {
+          try { input = await validateSchema(operation.definition.input, rawInput); }
+          catch (cause) { throw wrapValidationError({ operation: operation.name, phase: "input", cause }); }
+        }
+        const result = await operation.definition.handler({ ...moduleCtx, input });
+        if (!unsafe && operation.definition.return) {
+          try { return await validateSchema(operation.definition.return, result); }
+          catch (cause) { throw wrapValidationError({ operation: operation.name, phase: "return", cause }); }
+        }
+        return result;
+      }),
     );
-
-    if (!unsafe && operation.definition.return) {
-      try {
-        return await operation.definition.return.parseAsync(result);
-      } catch (error) {
-        throw wrapValidationError({
-          operation: operation.name,
-          phase: "return",
-          cause: error,
-        });
-      }
-    }
-
-    return result;
   };
 
   const call = (async (input: unknown) => execute(input, false)) as BusMethod<
@@ -761,27 +795,85 @@ function wrapTransportWithContext(
   ctx: TransportContext<RuntimeConfig, RuntimeBusBase>,
   guard: TransportCtxAccessGuard | undefined,
 ): unknown {
-  if (typeof value === "function") {
-    return function wrappedTransportFn(this: unknown, ...args: unknown[]) {
-      return runtimeGlobalState.transportContextStorage.run(ctx, () =>
-        runtimeGlobalState.transportCtxAccessGuardStorage.run(guard, () =>
-          (value as (...fnArgs: unknown[]) => unknown).apply(this, args),
-        ),
-      );
-    };
-  }
+  const wrappers = new WeakMap<object, object>();
+  const originals = runtimeGlobalState.transportOriginals;
+  const isObject = (input: unknown): input is object =>
+    input !== null && (typeof input === "object" || typeof input === "function");
+  const unwrap = (input: unknown): unknown =>
+    isObject(input) ? originals.get(input) ?? input : input;
+  const run = <T>(callback: () => T): T =>
+    runtimeGlobalState.transportContextStorage.run(ctx, () =>
+      runtimeGlobalState.transportCtxAccessGuardStorage.run(guard, callback),
+    );
 
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
+  const wrap = (input: unknown): unknown => {
+    if (!isObject(input)) return input;
+    // Native consumers inspect internal slots directly, without invoking proxy
+    // traps. Keep HTTP bodies, binary data and web primitives intact.
+    if (
+      input instanceof Response || input instanceof Request ||
+      input instanceof Headers || input instanceof Blob ||
+      input instanceof FormData || input instanceof URL ||
+      input instanceof URLSearchParams || input instanceof ArrayBuffer ||
+      input instanceof SharedArrayBuffer || ArrayBuffer.isView(input) ||
+      input instanceof ReadableStream || input instanceof WritableStream ||
+      input instanceof TransformStream || input instanceof AbortSignal ||
+      input instanceof AbortController
+    ) return input;
+    if (originals.has(input)) return input;
+    const existing = wrappers.get(input);
+    if (existing) return existing;
 
-  const output: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(
-    value as Record<string, unknown>,
-  )) {
-    output[key] = wrapTransportWithContext(nested, ctx, guard);
-  }
-  return output;
+    // Resolve asynchronous fluent methods back to the same wrapped instance.
+    // A native promise also keeps await/then compatible with internal slots.
+    if (input instanceof Promise) {
+      const promise = input.then((result) => run(() => wrap(result)));
+      wrappers.set(input, promise);
+      originals.set(promise, input);
+      return promise;
+    }
+
+    const wrapped = new Proxy(input, {
+      get(target, key) {
+        return run(() => {
+          // Accessors and methods must receive the original instance so private
+          // fields and native internal slots (Map, Set, Date, etc.) remain valid.
+          const nested = Reflect.get(target, key, target);
+          const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+          if (
+            descriptor && !descriptor.configurable &&
+            "value" in descriptor && !descriptor.writable
+          ) {
+            // Proxy invariants require the exact value of a frozen own property.
+            return nested;
+          }
+          return key === "constructor" ? nested : wrap(nested);
+        });
+      },
+      set(target, key, next) {
+        return run(() => Reflect.set(target, key, unwrap(next), target));
+      },
+      apply(target, receiver, args) {
+        return run(() => wrap(Reflect.apply(
+          target as (...args: unknown[]) => unknown,
+          unwrap(receiver),
+          args.map(unwrap),
+        )));
+      },
+      construct(target, args, newTarget) {
+        return run(() => wrap(Reflect.construct(
+          target as new (...args: unknown[]) => object,
+          args.map(unwrap),
+          unwrap(newTarget) as new (...args: unknown[]) => object,
+        )) as object);
+      },
+    });
+    wrappers.set(input, wrapped);
+    originals.set(wrapped, input);
+    return wrapped;
+  };
+
+  return wrap(value);
 }
 
 async function loadOperationDefinitions(
@@ -816,6 +908,11 @@ async function loadOperationDefinitions(
       );
     }
 
+    if (definition.input !== undefined) assertStandardSchema(definition.input);
+    if (definition.return !== undefined) assertStandardSchema(definition.return);
+    if (typeof definition.handler !== "function") {
+      throw new TypeError(`DISPATCHKIT_OPERATION_INVALID_HANDLER: ${operation.operationName} must define a handler`);
+    }
     loaded.push({
       kind: operation.kind,
       name: operation.operationName,
@@ -832,6 +929,7 @@ async function loadInfraModules(options: {
   srcDir: string;
   discovery: DiscoveryResult;
   ctx: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase>;
+  onDispose: (callback: () => void | Promise<void>) => void;
 }): Promise<{
   infra: Record<string, unknown>;
   transportFromInfra: Array<{
@@ -840,7 +938,7 @@ async function loadInfraModules(options: {
     source: TransportSource;
   }>;
 }> {
-  const infra: Record<string, unknown> = {};
+  const infra: Record<string, unknown> = Object.create(null);
   const transportFromInfra: Array<{
     key: string;
     filePath: string;
@@ -875,6 +973,7 @@ async function loadInfraModules(options: {
     }
 
     const infraCtx: InfraContext<RuntimeConfig> = {
+      onDispose: options.onDispose,
       config: options.ctx.config,
       logger: options.ctx.logger,
     };
@@ -906,12 +1005,12 @@ async function loadTransportModules(options: {
     filePath: string;
     source: TransportSource;
   }>;
-  ctx: TransportContext<RuntimeConfig, RuntimeBusBase>;
+  ctx: TransportFactoryContext<RuntimeConfig, RuntimeBusBase>;
 }): Promise<{
   transport: Record<string, unknown>;
   guard: TransportCtxAccessGuard | undefined;
 }> {
-  const transport: Record<string, unknown> = {};
+  const transport: Record<string, unknown> = Object.create(null);
   const allAllowPatterns: string[] = [];
 
   for (const module of options.transportModules) {
@@ -922,7 +1021,10 @@ async function loadTransportModules(options: {
     );
     const definition = (await runtimeGlobalState.transportContextStorage.run(
       options.ctx,
-      () => importDefault(absolute),
+      () => runtimeGlobalState.transportCtxAccessGuardStorage.run(
+        undefined,
+        () => importDefault(absolute),
+      ),
     )) as TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
 
     if (!definition || definition.__dispatchkitType !== "transport") {
@@ -931,7 +1033,7 @@ async function loadTransportModules(options: {
       );
     }
 
-    const transportCtx: TransportContext<RuntimeConfig, RuntimeBusBase> =
+    const transportCtx: TransportFactoryContext<RuntimeConfig, RuntimeBusBase> =
       options.ctx;
     const transportOptions = definition.options as
       | TransportDefinitionOptions
@@ -942,18 +1044,13 @@ async function loadTransportModules(options: {
       filePath: module.filePath,
       source: module.source,
     });
-    const moduleGuard =
-      allowPatterns.length > 0
-        ? buildTransportCtxAccessGuard({
-          srcDir: options.srcDir,
-          patterns: [
-            ...defaultPatterns,
-            ...expandTransportCtxAllowPatterns({
-              patterns: allowPatterns,
-            }),
-          ],
-        })
-        : undefined;
+    const moduleGuard = buildTransportCtxAccessGuard({
+      srcDir: options.srcDir,
+      patterns: [
+        ...defaultPatterns,
+        ...expandTransportCtxAllowPatterns({ patterns: allowPatterns }),
+      ],
+    });
     if (moduleGuard) {
       allAllowPatterns.push(...moduleGuard.patterns);
     }
@@ -990,9 +1087,9 @@ function buildBus(
   getRuntime: () => InternalRuntime,
 ): RuntimeBusBase {
   const bus: RuntimeBusBase = {
-    query: {},
-    mutation: {},
-    action: {},
+    query: Object.create(null),
+    mutation: Object.create(null),
+    action: Object.create(null),
   };
 
   for (const operation of operations) {
@@ -1009,6 +1106,27 @@ function buildBus(
   }
 
   return bus;
+}
+
+function validateDefaultConfig(input: Record<string, unknown>): RuntimeDefaultConfig {
+  const issues: StandardSchemaV1.Issue[] = [];
+  for (const key of ["SERVICE_NAME", "SERVICE_DESCRIPTION", "SERVICE_VERSION"] as const) {
+    if (typeof input[key] !== "string") issues.push({ message: `${key} must be a string`, path: [key] });
+  }
+  if (!LOG_LEVELS.includes(input.LOG_LEVEL as LogLevel)) {
+    issues.push({ message: `LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}`, path: ["LOG_LEVEL"] });
+  }
+  if (input.NODE_ENV !== "development" && input.NODE_ENV !== "production") {
+    issues.push({ message: "NODE_ENV must be development or production", path: ["NODE_ENV"] });
+  }
+  if (issues.length) throw new StandardSchemaError(issues);
+  return {
+    SERVICE_NAME: input.SERVICE_NAME as string,
+    SERVICE_DESCRIPTION: input.SERVICE_DESCRIPTION as string,
+    SERVICE_VERSION: input.SERVICE_VERSION as string,
+    LOG_LEVEL: input.LOG_LEVEL as RuntimeDefaultConfig["LOG_LEVEL"],
+    NODE_ENV: input.NODE_ENV as RuntimeDefaultConfig["NODE_ENV"],
+  };
 }
 
 async function resolveRuntimeConfig(options: {
@@ -1048,9 +1166,16 @@ async function resolveRuntimeConfig(options: {
   }
 
   const userSchema = await resolveConfigSchema(options.srcDir);
-  const schema = userSchema ? RuntimeSchema.and(userSchema) : RuntimeSchema;
+  const builtin = validateDefaultConfig(rawConfig);
+  if (!userSchema) return builtin;
+  const custom = await validateSchema(userSchema, rawConfig);
+  if (!custom || typeof custom !== "object" || Array.isArray(custom)) {
+    throw new TypeError("DISPATCHKIT_CONFIG_INVALID_RESULT: Config schema must produce an object");
+  }
+  const merged = { ...builtin, ...custom };
+  // User transforms may refine built-in fields, but cannot invalidate their public contract.
+  return { ...merged, ...validateDefaultConfig(merged) };
 
-  return (await schema.parseAsync(rawConfig)) as RuntimeConfig;
 }
 
 export function getModuleCtx(): ModuleContext<
@@ -1058,7 +1183,11 @@ export function getModuleCtx(): ModuleContext<
   RuntimeInfraShape,
   RuntimeBus
 > {
-  const current = runtimeGlobalState.moduleContextStorage.getStore();
+  const stored = runtimeGlobalState.moduleContextStorage.getStore();
+  if (stored) return stored as unknown as ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus>;
+  const callerFilePath = resolveCallerFilePath(getModuleCtx);
+  const imported = getImportScope(callerFilePath);
+  const current = imported?.module;
   if (current) {
     return current as unknown as ModuleContext<
       RuntimeConfigShape,
@@ -1067,8 +1196,9 @@ export function getModuleCtx(): ModuleContext<
     >;
   }
 
-  if (!runtimeGlobalState.activeRuntime) {
-    const callerFilePath = resolveCallerFilePath(getModuleCtx);
+  const pending = runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build;
+  const activeRuntime = pending ? pending.runtime : runtimeGlobalState.activeRuntime;
+  if (!activeRuntime || runtimeGlobalState.disposedRuntimes.has(activeRuntime)) {
     throw createRuntimeError({
       code: "DISPATCHKIT_CONTEXT_UNAVAILABLE",
       message: "Module context is unavailable outside runtime execution",
@@ -1081,10 +1211,10 @@ export function getModuleCtx(): ModuleContext<
   }
 
   return {
-    config: runtimeGlobalState.activeRuntime.config,
-    logger: runtimeGlobalState.activeRuntime.logger,
-    infra: runtimeGlobalState.activeRuntime.infra,
-    bus: runtimeGlobalState.activeRuntime.bus,
+    config: activeRuntime.config,
+    logger: activeRuntime.logger,
+    infra: activeRuntime.infra,
+    bus: activeRuntime.bus,
   } as unknown as ModuleContext<
     RuntimeConfigShape,
     RuntimeInfraShape,
@@ -1096,10 +1226,14 @@ export function getTransportCtx(): TransportContext<
   RuntimeConfigShape,
   RuntimeBus
 > {
-  const guard =
-    runtimeGlobalState.transportCtxAccessGuardStorage.getStore() ??
-    runtimeGlobalState.activeTransportCtxAccessGuard;
   const callerFilePath = resolveCallerFilePath(getTransportCtx);
+  const imported = getImportScope(callerFilePath);
+  const stored = runtimeGlobalState.transportContextStorage.getStore();
+  const current = stored ?? imported?.transport;
+  const pending = runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build;
+  const guard = stored
+    ? runtimeGlobalState.transportCtxAccessGuardStorage.getStore()
+    : imported ? imported.guard : pending ? undefined : runtimeGlobalState.activeTransportCtxAccessGuard;
 
   if (guard) {
     if (!isTransportCtxCallAllowed({ guard, callerFilePath })) {
@@ -1121,7 +1255,6 @@ export function getTransportCtx(): TransportContext<
     }
   }
 
-  const current = runtimeGlobalState.transportContextStorage.getStore();
   if (current) {
     return current as unknown as TransportContext<
       RuntimeConfigShape,
@@ -1129,7 +1262,8 @@ export function getTransportCtx(): TransportContext<
     >;
   }
 
-  if (!runtimeGlobalState.activeRuntime) {
+  const activeRuntime = pending ? pending.runtime : runtimeGlobalState.activeRuntime;
+  if (!activeRuntime || runtimeGlobalState.disposedRuntimes.has(activeRuntime)) {
     throw createRuntimeError({
       code: "DISPATCHKIT_CONTEXT_UNAVAILABLE",
       message: "Transport context is unavailable outside runtime execution",
@@ -1143,130 +1277,103 @@ export function getTransportCtx(): TransportContext<
   }
 
   return {
-    config: runtimeGlobalState.activeRuntime.config,
-    logger: runtimeGlobalState.activeRuntime.logger,
-    bus: runtimeGlobalState.activeRuntime.bus,
+    config: activeRuntime.config,
+    logger: activeRuntime.logger,
+    bus: activeRuntime.bus,
   } as unknown as TransportContext<RuntimeConfigShape, RuntimeBus>;
 }
 
-export async function buildRuntime(
+export function buildRuntime(
   options: BuildRuntimeOptions = {},
-): Promise<
-  Runtime<
-    RuntimeConfigShape,
-    RuntimeInfraShape,
-    RuntimeBus,
-    RuntimeTransportShape
-  >
-> {
-  runtimeGlobalState.activeRuntime = undefined;
-  runtimeGlobalState.activeTransportCtxAccessGuard = undefined;
+): Promise<Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>> {
+  if (getImportScope(resolveCallerFilePath(buildRuntime))) {
+    return Promise.reject(new Error("DISPATCHKIT_REENTRANT_BUILD: Cannot build a runtime during module evaluation"));
+  }
+  return runtimeGlobalState.buildContextStorage.run({}, () => buildRuntimeImpl(options));
+}
 
-  const rootDir = options.rootDir ? resolve(options.rootDir) : process.cwd();
-  const srcDir = options.srcDir
-    ? resolve(options.srcDir)
-    : join(rootDir, "src");
-  const generatedDir = options.generatedDir
-    ? resolve(options.generatedDir)
-    : join(srcDir, "generated", "runtime");
-  const envFile = options.envFile
-    ? resolve(options.envFile)
-    : join(rootDir, ".env");
+async function buildRuntimeImpl(
+  options: BuildRuntimeOptions,
+): Promise<Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>> {
+  const lifecycle = createLifecycle();
+  let runtimeRef: InternalRuntime | undefined;
+  try {
+    const rootDir = options.rootDir ? resolve(options.rootDir) : process.cwd();
+    const srcDir = options.srcDir ? resolve(rootDir, options.srcDir) : join(rootDir, "src");
+    runtimeGlobalState.buildContextStorage.getStore()!.srcDir = srcDir;
+    const generatedDir = options.generatedDir
+      ? resolve(rootDir, options.generatedDir) : join(srcDir, "generated", "runtime");
+    const envFile = options.envFile ? resolve(rootDir, options.envFile) : join(rootDir, ".env");
 
-  mkdirSync(generatedDir, { recursive: true });
-
-  const configOverrides = extractConfigOverrides(options);
-  const config = await resolveRuntimeConfig({
-    rootDir,
-    srcDir,
-    envFile,
-    overrides: configOverrides,
-  });
-
-  const { logger, runtimeConsole } = await resolveLogger({ srcDir, config });
-  mountGlobalConsole(runtimeConsole);
-
-  const discovery = await discoverRuntimeFiles(srcDir);
-  const loadedOperations = await loadOperationDefinitions(srcDir, discovery);
-
-  const runtimeRef: InternalRuntime = {
-    config,
-    logger,
-    infra: {},
-    bus: { query: {}, mutation: {}, action: {} },
-    transport: {},
-  };
-
-  runtimeRef.bus = buildBus(loadedOperations, () => runtimeRef);
-
-  const moduleCtx: ModuleContext<
-    RuntimeConfig,
-    Record<string, unknown>,
-    RuntimeBusBase
-  > = {
-    config: runtimeRef.config,
-    logger: runtimeRef.logger,
-    infra: runtimeRef.infra,
-    bus: runtimeRef.bus,
-  };
-
-  const infraResult = await loadInfraModules({
-    srcDir,
-    discovery,
-    ctx: moduleCtx,
-  });
-  runtimeRef.infra = infraResult.infra;
-  runtimeGlobalState.activeRuntime = runtimeRef;
-
-  const transportCtx: TransportContext<RuntimeConfig, RuntimeBusBase> = {
-    config: runtimeRef.config,
-    logger: runtimeRef.logger,
-    bus: runtimeRef.bus,
-  };
-
-  const transportModules = [
-    ...discovery.transport,
-    ...infraResult.transportFromInfra,
-  ].sort(
-    (left, right) =>
-      left.key.localeCompare(right.key) ||
-      left.source.localeCompare(right.source) ||
-      left.filePath.localeCompare(right.filePath),
-  );
-
-  const transportLoad = await loadTransportModules({
-    srcDir,
-    transportModules,
-    ctx: transportCtx,
-  });
-  runtimeRef.transport = transportLoad.transport;
-
-  const discoveryForArtifacts: DiscoveryResult = {
-    ...discovery,
-    infra: discovery.infra.filter(
-      (file) =>
-        !infraResult.transportFromInfra.some(
-          (transportModule) => transportModule.filePath === file,
-        ),
-    ),
-    transport: transportModules,
-  };
-
-  await generateArtifacts({
-    srcDir,
-    generatedDir,
-    discovery: discoveryForArtifacts,
-  });
-
-  runtimeGlobalState.activeRuntime = runtimeRef;
-  runtimeGlobalState.activeTransportCtxAccessGuard = transportLoad.guard;
-  (globalThis as typeof globalThis & { runtime: unknown }).runtime =
-    runtimeRef as any;
-
-  return runtimeRef as unknown as Runtime<
-    RuntimeConfigShape,
-    RuntimeInfraShape,
-    RuntimeBus,
-    RuntimeTransportShape
-  >;
+    const config = await resolveRuntimeConfig({ rootDir, srcDir, envFile, overrides: extractConfigOverrides(options) });
+    const { logger, runtimeConsole } = await resolveLogger({ srcDir, config });
+    const discovery = await discoverForArtifacts(srcDir);
+    const loadedOperations = await loadOperationDefinitions(srcDir, discovery);
+    const instance: InternalRuntime = {
+      config,
+      logger,
+      infra: Object.create(null),
+      bus: { query: Object.create(null), mutation: Object.create(null), action: Object.create(null) },
+      transport: Object.create(null),
+      dispose() {
+        runtimeGlobalState.disposedRuntimes.add(instance);
+        if (runtimeGlobalState.activeRuntime === instance) {
+          runtimeGlobalState.activeRuntime = undefined;
+          runtimeGlobalState.activeTransportCtxAccessGuard = undefined;
+          if ((globalThis as any).runtime === instance) delete (globalThis as any).runtime;
+          mountGlobalConsole(runtimeGlobalState.baseConsole);
+        }
+        return lifecycle.dispose();
+      },
+    };
+    runtimeRef = instance;
+    instance.bus = buildBus(loadedOperations, () => instance);
+    const moduleCtx: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase> = {
+      config, logger, infra: instance.infra, bus: instance.bus,
+    };
+    const infraResult = await loadInfraModules({ srcDir, discovery, ctx: moduleCtx, onDispose: lifecycle.onDispose });
+    instance.infra = infraResult.infra;
+    moduleCtx.infra = instance.infra;
+    runtimeGlobalState.buildContextStorage.getStore()!.runtime = instance;
+    const transportCtx: TransportFactoryContext<RuntimeConfig, RuntimeBusBase> = {
+      config, logger, bus: instance.bus, onDispose: lifecycle.onDispose,
+    };
+    const transportModules = [...discovery.transport, ...infraResult.transportFromInfra].sort(
+      (left, right) => left.key.localeCompare(right.key) || left.source.localeCompare(right.source) || left.filePath.localeCompare(right.filePath),
+    );
+    // Validate collisions before starting any transport resources.
+    const transportKeys = new Set<string>();
+    for (const module of transportModules) {
+      if (transportKeys.has(module.key)) throw new Error(`DISPATCHKIT_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`);
+      transportKeys.add(module.key);
+    }
+    const transportLoad = await loadTransportModules({ srcDir, transportModules, ctx: transportCtx });
+    instance.transport = transportLoad.transport;
+    if (options.generateArtifacts !== false) {
+      mkdirSync(generatedDir, { recursive: true });
+      await generateArtifacts({
+        srcDir,
+        generatedDir,
+        discovery: {
+          ...discovery,
+          infra: discovery.infra.filter(file => !infraResult.transportFromInfra.some(module => module.filePath === file)),
+          transport: transportModules,
+        },
+      });
+    }
+    if (options.mountGlobal !== false) {
+      mountGlobalConsole(runtimeConsole);
+      runtimeGlobalState.activeRuntime = instance;
+      runtimeGlobalState.activeTransportCtxAccessGuard = transportLoad.guard;
+      (globalThis as typeof globalThis & { runtime: unknown }).runtime = instance as any;
+    }
+    return instance as unknown as Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>;
+  } catch (error) {
+    if (runtimeRef) runtimeGlobalState.disposedRuntimes.add(runtimeRef);
+    try { await lifecycle.dispose(); }
+    catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "DISPATCHKIT_BUILD_FAILED: Initialization and cleanup failed", { cause: error });
+    }
+    throw error;
+  }
 }

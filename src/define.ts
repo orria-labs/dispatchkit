@@ -1,4 +1,3 @@
-import type { z } from "zod";
 import type {
   ConfigDefinition,
   InfraDefinition,
@@ -9,33 +8,38 @@ import type {
   RuntimeBus,
   RuntimeConfigShape,
   RuntimeInfraShape,
+  RuntimeLoggerShape,
+  Schema,
+  SchemaInput,
   TransportDefinition,
 } from "./types.ts";
 
 type DefineOperationOptions<
-  TInput extends z.ZodTypeAny | undefined,
-  TReturn extends z.ZodTypeAny | undefined,
+  TInput extends Schema | undefined,
+  TReturn extends Schema | undefined,
   TConfig,
   TInfra,
   TBus,
   TKind extends OperationKind,
+  TResult,
 > = {
   input?: TInput;
   return?: TReturn;
-  handler: OperationDefinition<TKind, TInput, TReturn, TConfig, TInfra, TBus>["handler"];
+  handler: OperationDefinition<TKind, TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult>["handler"];
 };
 
 function defineOperation<
   TKind extends OperationKind,
-  TInput extends z.ZodTypeAny | undefined = undefined,
-  TReturn extends z.ZodTypeAny | undefined = undefined,
+  TInput extends Schema | undefined = undefined,
+  TReturn extends Schema | undefined = undefined,
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
+  TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
   kind: TKind,
-  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, TKind>,
-): OperationDefinition<TKind, TInput, TReturn, TConfig, TInfra, TBus> {
+  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, TKind, TResult>,
+): OperationDefinition<TKind, TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
   return {
     __dispatchkitType: "operation",
     kind,
@@ -46,42 +50,45 @@ function defineOperation<
 }
 
 export function defineQuery<
-  TInput extends z.ZodTypeAny | undefined = undefined,
-  TReturn extends z.ZodTypeAny | undefined = undefined,
+  TInput extends Schema | undefined = undefined,
+  TReturn extends Schema | undefined = undefined,
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
+  TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
-  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "query">,
-): OperationDefinition<"query", TInput, TReturn, TConfig, TInfra, TBus> {
+  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "query", TResult>,
+): OperationDefinition<"query", TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
   return defineOperation("query", options);
 }
 
 export function defineMutation<
-  TInput extends z.ZodTypeAny | undefined = undefined,
-  TReturn extends z.ZodTypeAny | undefined = undefined,
+  TInput extends Schema | undefined = undefined,
+  TReturn extends Schema | undefined = undefined,
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
+  TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
-  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "mutation">,
-): OperationDefinition<"mutation", TInput, TReturn, TConfig, TInfra, TBus> {
+  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "mutation", TResult>,
+): OperationDefinition<"mutation", TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
   return defineOperation("mutation", options);
 }
 
 export function defineAction<
-  TInput extends z.ZodTypeAny | undefined = undefined,
-  TReturn extends z.ZodTypeAny | undefined = undefined,
+  TInput extends Schema | undefined = undefined,
+  TReturn extends Schema | undefined = undefined,
   TConfig = RuntimeConfigShape,
   TInfra = RuntimeInfraShape,
   TBus = RuntimeBus,
+  TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
-  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "action">,
-): OperationDefinition<"action", TInput, TReturn, TConfig, TInfra, TBus> {
+  options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "action", TResult>,
+): OperationDefinition<"action", TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
   return defineOperation("action", options);
 }
 
-export function defineConfig<TSchema extends z.ZodTypeAny>(
+export function defineConfig<TSchema extends Schema>(
   schema: TSchema,
 ): ConfigDefinition<TSchema> {
   return {
@@ -104,7 +111,7 @@ export function defineLogger<
 
 export function defineInfra<
   TConfig = RuntimeConfigShape,
-  TResult = RuntimeInfraShape,
+  TResult = unknown,
 >(
   factory: InfraDefinition<TConfig, TResult>["factory"],
 ): InfraDefinition<TConfig, TResult> {

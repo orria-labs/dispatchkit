@@ -131,7 +131,37 @@ async function discoverModuleOperations(modulesDir: string): Promise<DiscoveredO
     });
   }
 
+  assertOperationPathsNoCollisions(operations);
   return operations;
+}
+
+// Flat aliases and grouped paths share one namespace at runtime. Validate both
+// before generating types or executing any application definitions.
+function assertOperationPathsNoCollisions(operations: DiscoveredOperation[]): void {
+  type Node = { operation?: DiscoveredOperation; children: Map<string, Node> };
+  for (const kind of ["query", "mutation", "action"] as const) {
+    const root: Node = { children: new Map() };
+    const entries = operations.filter((operation) => operation.kind === kind);
+    for (const operation of entries) {
+      root.children.set(operation.operationName, { operation, children: new Map() });
+    }
+    for (const operation of entries) {
+      if (operation.operationSegments.length <= 1) continue;
+      let current = root;
+      for (const [index, segment] of operation.operationSegments.entries()) {
+        const next = current.children.get(segment) ?? { children: new Map<string, Node>() };
+        const isLeaf = index === operation.operationSegments.length - 1;
+        if (next.operation || (isLeaf && next.children.size > 0)) {
+          throw new Error(
+            `DISPATCHKIT_BUS_GROUP_COLLISION: Operation "${operation.filePath}" conflicts at "${kind}.${operation.operationSegments.slice(0, index + 1).join(".")}" with an operation or namespace`,
+          );
+        }
+        current.children.set(segment, next);
+        if (isLeaf) next.operation = operation;
+        current = next;
+      }
+    }
+  }
 }
 
 function isRootTs(relativePath: string): boolean {
