@@ -1,6 +1,6 @@
 {
 	"name": "@orria/dispatchkit",
-	"version": "1.0.7",
+	"version": "1.1.0",
 	"description": "Lightweight CQRS-lite application framework and runtime toolkit for Bun.",
 	"license": "MIT",
 	"type": "module",
@@ -13,7 +13,9 @@
 	"files": [
 		"dist",
 		"README.md",
-		"LICENSE"
+		"LICENSE",
+		"docs/README.ru.md",
+		"docs/assets/logo.svg"
 	],
 	"scripts": {
 		"clean": "rm -rf dist",
