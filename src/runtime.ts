@@ -692,31 +692,30 @@ function createBusMethod(options: {
   const inputSchema = isTypedSchema(definition.input) ? undefined : definition.input;
   const returnSchema = isTypedSchema(definition.return) ? undefined : definition.return;
 
-  // Validation is always awaited (as in 1.1): handlers start after a microtask, and thenables
-  // or throwing `then` getters in validated values are reported as validation errors.
-  const validate = async (
-    schema: StandardSchemaV1,
-    value: unknown,
-    phase: "input" | "return",
-  ): Promise<unknown> => {
-    try {
-      return await runSchema(schema, value);
-    } catch (cause) {
-      throw wrapValidationError({ operation: name, phase, cause });
-    }
-  };
-
-  // Validation runs inside the operation scope so validators see the CQRS caller.
+  // Validation is always awaited inside `try` (as in 1.1): handlers start after a microtask, and
+  // thenables or throwing `then` getters in validated values become validation errors. It runs
+  // inside the operation scope so validators see the CQRS caller.
   const runOperation = async (
     ctx: InternalModuleCtx,
     rawInput: unknown,
     unsafe: boolean,
   ): Promise<unknown> => {
-    const input =
-      !unsafe && inputSchema ? await validate(inputSchema, rawInput, "input") : rawInput;
+    let input = rawInput;
+    if (!unsafe && inputSchema) {
+      try {
+        input = await runSchema(inputSchema, rawInput);
+      } catch (cause) {
+        throw wrapValidationError({ operation: name, phase: "input", cause });
+      }
+    }
     // Called as a method, as before: handlers may rely on `this` being the definition.
     const result = await definition.handler({ ...ctx, input });
-    return !unsafe && returnSchema ? validate(returnSchema, result, "return") : result;
+    if (unsafe || !returnSchema) return result;
+    try {
+      return await runSchema(returnSchema, result);
+    } catch (cause) {
+      throw wrapValidationError({ operation: name, phase: "return", cause });
+    }
   };
 
   // Not async (saves one promise layer per call), but every failure is still a rejection.
