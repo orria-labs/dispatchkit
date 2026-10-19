@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "bun": "1.4.4",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M1 Pro",
+    "date": "2026-10-20"
+  },
+  "results": {
+    "bus: query without schema": 286.8,
+    "bus: query $unsafe": 296.1,
+    "bus: query with zod input": 405.9,
+    "bus: query with valibot input": 391.8,
+    "bus: nested query (2 levels)": 564.4,
+    "transport: plain object method": 275.4,
+    "transport: class instance method": 274.4,
+    "transport: getTransportCtx() from own file": 21218.9,
+    "transport: getTransportCtx() via allowlist": 21850.7,
+    "buildRuntime (warm, 7 modules)": 318343.1
+  }
+}
