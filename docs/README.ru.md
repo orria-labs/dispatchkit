@@ -8,11 +8,12 @@
 - Runtime-модули: `defineConfig`, `defineLogger`, `defineInfra`, `defineTransport`
 - Сборка runtime: `buildRuntime()`
 - Строгие CQRS guards во время выполнения
-- Валидация config, `input` и `return` через Standard Schema
+- Валидация config, `input` и `return` через Standard Schema, а также `typed<T>()` только для типов
 - Освобождение ресурсов через `onDispose()` и `runtime.dispose()`
 - Хелперы контекста: `getModuleCtx()`, `getTransportCtx()`
 - Генерация runtime-артефактов в `src/generated/runtime`
-- CLI: `dispatchkit generate` и `dispatchkit generate --watch`
+- CLI: `dispatchkit generate` и событийный `dispatchkit generate --watch`
+- `DispatchkitError` с машиночитаемым `code`
 
 ## Установка
 
@@ -20,7 +21,7 @@
 bun add @orria/dispatchkit
 ```
 
-Валидатор устанавливается отдельно. Для примеров с Zod ниже нужен `bun add zod`, для Valibot нужен `bun add valibot`. Zod не является обязательной зависимостью Dispatchkit. `dotenv` входит в пакет. Свой логгер, например `pino`, можно подключить через `defineLogger`.
+Валидатор устанавливается отдельно. Для примеров с Zod ниже нужен `bun add zod`, для Valibot нужен `bun add valibot`. Zod не является обязательной зависимостью Dispatchkit. Env-файлы разбираются встроенным `parseEnv` из `node:util`. Свой логгер, например `pino`, можно подключить через `defineLogger`.
 
 ## Минимальная структура приложения
 
@@ -233,6 +234,20 @@ await runtime.bus.query.increment.$unsafe(41); // 42
 
 `$unsafe` пропускает обе схемы вместе со всеми преобразованиями. Он принимает значение, которое обычно получает хендлер, и возвращает исходный результат хендлера. Ограничения CQRS продолжают действовать. `$input` и `$return` содержат исходные объекты схем или `undefined`, если схемы не заданы.
 
+### Схемы только для типов
+
+`typed<T>()` задаёт тип `input`, `return` или config без проверки в рантайме. Шина такую схему
+полностью пропускает, поэтому она ничего не стоит во время выполнения:
+
+```ts
+import { defineQuery, typed } from "@orria/dispatchkit";
+
+export default defineQuery({
+  input: typed<{ id: string }>(),
+  handler: ({ input, infra }) => infra.repo.get(input.id),
+});
+```
+
 ### Elysia и TypeBox
 
 Схемам `t` из Elysia нужен адаптер. Путь импорта зависит от версии TypeBox:
@@ -342,6 +357,25 @@ Runtime принудительно ограничивает цепочки вы�
 
 Нарушение вызывает `DISPATCHKIT_CQRS_GUARD`.
 
+## Ошибки
+
+Ошибки фреймворка являются экземплярами `DispatchkitError`. Поле `code` содержит префикс
+`DISPATCHKIT_*` из сообщения, поэтому ошибки можно обрабатывать без разбора строк:
+
+```ts
+import { DispatchkitError } from "@orria/dispatchkit";
+
+try {
+  await runtime.bus.query.user({ id: 1 });
+} catch (error) {
+  if (error instanceof DispatchkitError && error.code === "DISPATCHKIT_VALIDATION_ERROR") {
+    console.warn(error.message, error.cause); // cause: StandardSchemaError с `issues`
+  }
+}
+```
+
+`StandardSchemaError` (код `DISPATCHKIT_SCHEMA_VALIDATION_ERROR`) наследует `DispatchkitError`.
+
 ## Поиск модулей
 
 Dispatchkit сканирует `srcDir` по шаблонам:
@@ -386,7 +420,7 @@ dispatchkit generate --watch
 dispatchkit generate --srcDir ./src --generatedDir ./src/generated/runtime
 ```
 
-`--watch` обновляет сгенерированные типы и manifest при изменении файлов. Он не перезагружает модули приложения в запущенном процессе.
+`--watch` обновляет сгенерированные типы и manifest при изменении файлов. Он не перезагружает модули приложения в запущенном процессе. Слежение построено на событиях (`fs.watch`): изменения группируются с задержкой (`--debounceMs`, по умолчанию 100 мс), в простое файлы не опрашиваются.
 
 Опции:
 
@@ -394,10 +428,45 @@ dispatchkit generate --srcDir ./src --generatedDir ./src/generated/runtime
 - `--srcDir <path>`
 - `--generatedDir <path>`
 - `--watch`
-- `--intervalMs <ms>`
+- `--debounceMs <ms>`
+- `--intervalMs <ms>` (устаревший синоним `--debounceMs`)
 
-## Локальная сборка пакета
+Программное слежение останавливается через `AbortSignal`:
+
+```ts
+import { watchRuntime } from "@orria/dispatchkit";
+
+const controller = new AbortController();
+const watching = watchRuntime({ debounceMs: 50, signal: controller.signal });
+// ...
+controller.abort();
+await watching;
+```
+
+## Производительность
+
+Горячие пути измеряются бенчмарками в [`bench/`](../bench/README.md). A/B-прогон 1.2.0 против
+опубликованной 1.1.0 в одной сессии (`bun run bench:compare -- --ref v1.1.0`, лучший из 5
+прогонов, Bun 1.4.4, Apple M1 Pro):
+
+| Сценарий                           |        1.1.0 |        1.2.0 |   Изменение |
+| ---------------------------------- | -----------: | -----------: | ----------: |
+| вызов шины без схемы               |       308 ns |       172 ns |        −44% |
+| вызов шины со схемой zod / valibot | 438 / 435 ns | 307 / 296 ns | −30% / −32% |
+| вложенный вызов (2 уровня)         |       617 ns |       345 ns |        −44% |
+| метод transport (plain / класс)    | 292 / 281 ns | 184 / 200 ns | −37% / −29% |
+| `getTransportCtx()`                |      26.1 µs |       3.4 µs |        −87% |
+| `buildRuntime` (повторная сборка)  |      0.33 ms |      0.32 ms |         −1% |
+
+## Разработка пакета
+
+Нужен Bun 1.4.3+: форматирование, линтинг и проверка типов выполняются встроенными `bun fmt`,
+`bun lint` и `bun check`, настройки лежат в `bunfig.toml`.
 
 ```bash
-bun run build
+bun run verify        # bun fmt --check, bun lint (без предупреждений), bun check, тесты
+bun run build         # сборка в dist/ (TypeScript 7)
+bun run bench         # бенчмарки против bench/baseline.json (`-- --check` падает при регрессии)
+bun run bench:update  # записать новый baseline
+bun run bench:compare # A/B против HEAD; изменения не должны замедлять больше чем на 5% (AGENTS.md)
 ```

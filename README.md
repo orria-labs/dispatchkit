@@ -14,11 +14,12 @@
 - Runtime modules: `defineConfig`, `defineLogger`, `defineInfra`, `defineTransport`
 - Runtime builder: `buildRuntime()`
 - Strict CQRS call guards at runtime
-- Standard Schema validation for config and operation `input` and `return`
+- Standard Schema validation for config and operation `input` and `return`, plus type-only `typed<T>()`
 - Resource cleanup through `onDispose()` and `runtime.dispose()`
 - Context helpers: `getModuleCtx()`, `getTransportCtx()`
 - Runtime artifact generation into `src/generated/runtime`
-- CLI: `dispatchkit generate` and `dispatchkit generate --watch`
+- CLI: `dispatchkit generate` and event-based `dispatchkit generate --watch`
+- `DispatchkitError` with machine-readable `code`
 
 ## Installation
 
@@ -26,7 +27,7 @@
 bun add @orria/dispatchkit
 ```
 
-Install a validator separately. The Zod examples below use `bun add zod`; Valibot uses `bun add valibot`. Dispatchkit has no mandatory Zod dependency. `dotenv` is included. A custom logger such as `pino` is optional through `defineLogger`.
+Install a validator separately. The Zod examples below use `bun add zod`; Valibot uses `bun add valibot`. Dispatchkit has no mandatory Zod dependency. Env files are parsed with the built-in `node:util` `parseEnv`. A custom logger such as `pino` is optional through `defineLogger`.
 
 ## Minimal app structure
 
@@ -239,6 +240,20 @@ await runtime.bus.query.increment.$unsafe(41); // 42
 
 `$unsafe` skips both validators and all their transforms. It takes the value the handler normally receives and returns the handler's raw result. CQRS guards still apply. `$input` and `$return` expose the original schema objects, or `undefined` when omitted.
 
+### Type-only schemas
+
+`typed<T>()` gives `input`, `return` or config a TypeScript type without runtime validation. The bus
+skips it entirely, so it costs nothing at runtime:
+
+```ts
+import { defineQuery, typed } from "@orria/dispatchkit";
+
+export default defineQuery({
+  input: typed<{ id: string }>(),
+  handler: ({ input, infra }) => infra.repo.get(input.id),
+});
+```
+
 ### Elysia and TypeBox
 
 Elysia's `t` schemas need an adapter. Choose the subpath that matches the TypeBox version:
@@ -348,6 +363,25 @@ Runtime enforces call chain restrictions:
 
 Invalid calls throw `DISPATCHKIT_CQRS_GUARD`.
 
+## Errors
+
+Framework errors are `DispatchkitError` instances. `code` holds the `DISPATCHKIT_*` prefix of the
+message, so errors can be handled without parsing strings:
+
+```ts
+import { DispatchkitError } from "@orria/dispatchkit";
+
+try {
+  await runtime.bus.query.user({ id: 1 });
+} catch (error) {
+  if (error instanceof DispatchkitError && error.code === "DISPATCHKIT_VALIDATION_ERROR") {
+    console.warn(error.message, error.cause); // cause: StandardSchemaError with `issues`
+  }
+}
+```
+
+`StandardSchemaError` (code `DISPATCHKIT_SCHEMA_VALIDATION_ERROR`) extends `DispatchkitError`.
+
 ## Discovery rules
 
 Dispatchkit scans under `srcDir`:
@@ -392,7 +426,7 @@ dispatchkit generate --watch
 dispatchkit generate --srcDir ./src --generatedDir ./src/generated/runtime
 ```
 
-`--watch` updates generated types and the manifest as files change. It does not reload application modules in a running process.
+`--watch` updates generated types and the manifest as files change. It does not reload application modules in a running process. Watching is event-based (`fs.watch`): changes are debounced (`--debounceMs`, default 100ms) and nothing is polled while idle.
 
 Options:
 
@@ -400,12 +434,47 @@ Options:
 - `--srcDir <path>`
 - `--generatedDir <path>`
 - `--watch`
-- `--intervalMs <ms>`
+- `--debounceMs <ms>`
+- `--intervalMs <ms>` (deprecated alias of `--debounceMs`)
 
-## Build this package locally
+Programmatic watching can be stopped with an `AbortSignal`:
+
+```ts
+import { watchRuntime } from "@orria/dispatchkit";
+
+const controller = new AbortController();
+const watching = watchRuntime({ debounceMs: 50, signal: controller.signal });
+// ...
+controller.abort();
+await watching;
+```
+
+## Performance
+
+Hot paths are benchmarked in [`bench/`](bench/README.md). An A/B run of 1.2.0 against the
+published 1.1.0 in one session (`bun run bench:compare -- --ref v1.1.0`, best of 5 runs, Bun
+1.4.4, Apple M1 Pro):
+
+| Scenario                          |        1.1.0 |        1.2.0 |      Change |
+| --------------------------------- | -----------: | -----------: | ----------: |
+| bus call without schema           |       308 ns |       172 ns |        −44% |
+| bus call with zod / valibot input | 438 / 435 ns | 307 / 296 ns | −30% / −32% |
+| nested bus call (2 levels)        |       617 ns |       345 ns |        −44% |
+| transport method (plain / class)  | 292 / 281 ns | 184 / 200 ns | −37% / −29% |
+| `getTransportCtx()`               |      26.1 µs |       3.4 µs |        −87% |
+| `buildRuntime` (warm)             |      0.33 ms |      0.32 ms |         −1% |
+
+## Develop this package
+
+Requires Bun 1.4.3+: formatting, linting and type checking use the built-in `bun fmt`, `bun lint`
+and `bun check`, configured in `bunfig.toml`.
 
 ```bash
-bun run build
+bun run verify        # bun fmt --check, bun lint (zero warnings), bun check, tests
+bun run build         # build into dist/ (TypeScript 7)
+bun run bench         # benchmarks vs bench/baseline.json (`-- --check` fails on regressions)
+bun run bench:update  # record a new baseline
+bun run bench:compare # A/B vs HEAD; changes must not be >5% slower (AGENTS.md)
 ```
 
 ## Documentation
