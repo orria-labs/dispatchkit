@@ -40,7 +40,6 @@ import type {
 import {
   assertStandardSchema,
   isTypedSchema,
-  runSchema,
   StandardSchemaError,
   validateSchema,
 } from "./validation.ts";
@@ -692,8 +691,8 @@ function createBusMethod(options: {
   const inputSchema = isTypedSchema(definition.input) ? undefined : definition.input;
   const returnSchema = isTypedSchema(definition.return) ? undefined : definition.return;
 
-  // Validation is always awaited inside `try` (as in 1.1): handlers start after a microtask, and
-  // thenables or throwing `then` getters in validated values become validation errors. It runs
+  // Validation uses exactly 1.1's `await validateSchema()` inside `try`: same microtask timing for
+  // validator results and handler start, thenables in values become validation errors. It runs
   // inside the operation scope so validators see the CQRS caller.
   const runOperation = async (
     ctx: InternalModuleCtx,
@@ -703,7 +702,7 @@ function createBusMethod(options: {
     let input = rawInput;
     if (!unsafe && inputSchema) {
       try {
-        input = await runSchema(inputSchema, rawInput);
+        input = await validateSchema(inputSchema, rawInput);
       } catch (cause) {
         throw wrapValidationError({ operation: name, phase: "input", cause });
       }
@@ -712,7 +711,7 @@ function createBusMethod(options: {
     const result = await definition.handler({ ...ctx, input });
     if (unsafe || !returnSchema) return result;
     try {
-      return await runSchema(returnSchema, result);
+      return await validateSchema(returnSchema, result);
     } catch (cause) {
       throw wrapValidationError({ operation: name, phase: "return", cause });
     }

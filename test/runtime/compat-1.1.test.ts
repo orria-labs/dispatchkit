@@ -166,6 +166,53 @@ export default defineQuery({
     );
   });
 
+  it("reads validator results with 1.1 microtask timing", async () => {
+    await withTempProject(
+      {
+        "src/modules/micro.query.ts": `${imp}
+export default defineQuery({
+  input: { "~standard": { version: 1, vendor: "custom", validate: (value: unknown) => ({ value }) } },
+  handler: ({ input }) => (input as { value: string }).value,
+});`,
+        "src/modules/getter.query.ts": `${imp}
+export default defineQuery({
+  input: { "~standard": { version: 1, vendor: "custom", validate: () => ({ get value() { return (globalThis as any).__dkState; } }) } },
+  handler: ({ input }) => input,
+});`,
+        "src/modules/once.query.ts": `${imp}
+export default defineQuery({
+  input: { "~standard": { version: 1, vendor: "custom", validate: () => {
+    const promise = Promise.resolve({ value: 42 });
+    let reads = 0;
+    Object.defineProperty(promise, "then", { get: () => {
+      if (++reads > 1) throw new Error("read then twice");
+      return Promise.prototype.then.bind(promise);
+    } });
+    return promise;
+  } } },
+  handler: ({ input }) => input,
+});`,
+      },
+      async (rootDir) => {
+        const runtime = await buildRuntime({ rootDir, mountGlobal: false });
+        const query = (runtime.bus as any).query;
+
+        const input = { value: "before" };
+        const micro = query.micro(input);
+        queueMicrotask(() => (input.value = "after"));
+        expect(await micro).toBe("after");
+
+        (globalThis as any).__dkState = "before";
+        const getter = query.getter();
+        (globalThis as any).__dkState = "after";
+        expect(await getter).toBe("after");
+
+        expect(await query.once()).toBe(42);
+        await runtime.dispose();
+      },
+    );
+  });
+
   it("creates wrappers for nested proxies inside the transport scope", async () => {
     await withTempProject(
       {
