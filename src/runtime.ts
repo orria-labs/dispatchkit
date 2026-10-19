@@ -37,7 +37,12 @@ import type {
   TransportFactoryContext,
   TransportSource,
 } from "./types.ts";
-import { assertStandardSchema, StandardSchemaError, validateSchema } from "./validation.ts";
+import {
+  assertStandardSchema,
+  runSchema,
+  StandardSchemaError,
+  validateSchema,
+} from "./validation.ts";
 
 type RuntimeConfig = RuntimeDefaultConfig & Record<string, unknown>;
 type InternalRuntime = Runtime<
@@ -47,10 +52,13 @@ type InternalRuntime = Runtime<
   Record<string, unknown>
 >;
 
-type CallFrame = {
-  kind: OperationKind;
-  name: string;
-};
+type InternalModuleCtx = ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase>;
+type InternalTransportCtx = TransportContext<RuntimeConfig, RuntimeBusBase>;
+
+/** Active module context plus the executing operation (absent inside infra factories). */
+type ModuleScope = { ctx: InternalModuleCtx; kind?: OperationKind; name?: string };
+/** Active transport context with the allowlist that applies to it. */
+type TransportScope = { ctx: InternalTransportCtx; guard: TransportCtxAccessGuard | undefined };
 
 type LoadedOperation = {
   kind: OperationKind;
@@ -71,6 +79,8 @@ type TransportCtxAccessGuard = {
   srcDir: string;
   patterns: string[];
   globs: Bun.Glob[];
+  /** Allow/deny verdict per caller file: glob matching runs once per file. */
+  verdicts: Map<string, boolean>;
 };
 
 type TransportCtxModuleRef = {
@@ -79,34 +89,28 @@ type TransportCtxModuleRef = {
   source: TransportSource;
 };
 
-const moduleContextStorage = new AsyncLocalStorage<
-  ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase>
->();
-const transportContextStorage = new AsyncLocalStorage<
-  TransportContext<RuntimeConfig, RuntimeBusBase>
->();
-const transportCtxAccessGuardStorage = new AsyncLocalStorage<TransportCtxAccessGuard | undefined>();
-const callFrameStorage = new AsyncLocalStorage<CallFrame[]>();
+// One store per scope keeps every bus call and transport access to a single `run()`.
+const moduleScopeStorage = new AsyncLocalStorage<ModuleScope>();
+const transportScopeStorage = new AsyncLocalStorage<TransportScope>();
 type BuildScope = { runtime?: InternalRuntime; srcDir?: string };
 type ImportScope = {
   build?: BuildScope;
-  module?: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase>;
-  transport?: TransportContext<RuntimeConfig, RuntimeBusBase>;
+  module?: InternalModuleCtx;
+  transport?: InternalTransportCtx;
   guard?: TransportCtxAccessGuard;
 };
 const buildContextStorage = new AsyncLocalStorage<BuildScope>();
 const disposedRuntimes = new WeakSet<InternalRuntime>();
-const RUNTIME_GLOBAL_STATE_KEY = Symbol.for("dispatchkit.runtime.globalState.v2");
+const RUNTIME_GLOBAL_STATE_KEY = Symbol.for("dispatchkit.runtime.globalState.v3");
 
 type RuntimeGlobalState = {
   baseConsole: ConsoleLike;
   importQueue: Promise<void>;
   importScope: ImportScope | undefined;
   transportOriginals: WeakMap<object, object>;
-  moduleContextStorage: typeof moduleContextStorage;
-  transportContextStorage: typeof transportContextStorage;
-  transportCtxAccessGuardStorage: typeof transportCtxAccessGuardStorage;
-  callFrameStorage: typeof callFrameStorage;
+  moduleScopeStorage: typeof moduleScopeStorage;
+  transportScopeStorage: typeof transportScopeStorage;
+  physicalPaths: Map<string, string>;
   buildContextStorage: typeof buildContextStorage;
   disposedRuntimes: typeof disposedRuntimes;
   activeRuntime: InternalRuntime | undefined;
@@ -124,10 +128,9 @@ function getRuntimeGlobalState(): RuntimeGlobalState {
       importQueue: Promise.resolve(),
       importScope: undefined,
       transportOriginals: new WeakMap(),
-      moduleContextStorage,
-      transportContextStorage,
-      transportCtxAccessGuardStorage,
-      callFrameStorage,
+      moduleScopeStorage,
+      transportScopeStorage,
+      physicalPaths: new Map(),
       buildContextStorage,
       disposedRuntimes,
       activeRuntime: undefined,
@@ -142,13 +145,6 @@ const runtimeGlobalState = getRuntimeGlobalState();
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 type LogLevel = (typeof LOG_LEVELS)[number];
-const LOG_LEVEL_INDEX = LOG_LEVELS.reduce<Record<LogLevel, number>>(
-  (acc, level, index) => {
-    acc[level] = index;
-    return acc;
-  },
-  {} as Record<LogLevel, number>,
-);
 
 const RESERVED_RUNTIME_OPTION_KEYS = new Set([
   "rootDir",
@@ -164,12 +160,20 @@ function normalizeSeparators(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
+/** Real path (symlinks resolved), cached: stack-based checks would otherwise hit the fs per call. */
 function resolvePhysicalPath(value: string): string {
-  try {
-    return realpathSync(value);
-  } catch {
-    return resolve(value);
+  const cache = runtimeGlobalState.physicalPaths;
+  let physical = cache.get(value);
+  if (physical === undefined) {
+    try {
+      physical = realpathSync(value);
+    } catch {
+      // Not on disk (yet): resolve lexically and retry on the next lookup.
+      return resolve(value);
+    }
+    cache.set(value, physical);
   }
+  return physical;
 }
 
 const RUNTIME_FILE_PATH = normalizeSeparators(fileURLToPath(import.meta.url));
@@ -257,42 +261,43 @@ function buildTransportCtxAccessGuard(options: {
     srcDir: resolvePhysicalPath(options.srcDir),
     patterns: normalizedPatterns,
     globs: normalizedPatterns.map((pattern) => new Bun.Glob(pattern)),
+    verdicts: new Map(),
   };
 }
 
-function resolveCallerFilePath(skipper: (...args: any[]) => unknown): string | undefined {
-  if (typeof Error.captureStackTrace !== "function") {
-    return undefined;
-  }
+/**
+ * `    at fn (/path/file.ts:1:2)` or `    at /path/file.ts:1:2` -> `/path/file.ts`.
+ * The location must start like a path, so parentheses inside paths (`app/(group)/x.ts`) are kept.
+ */
+const STACK_LOCATION = /^\s*at (?:.*? \()?((?:file:\/\/|[A-Za-z]:[\\/]|\/).*?)(?::\d+:\d+)?\)?$/;
 
-  const previousPrepareStackTrace = Error.prepareStackTrace;
-
+/**
+ * File of the first stack frame outside this module. Parses the default string stack: faster
+ * than structured call sites, and independent of custom `Error.prepareStackTrace` formatters.
+ * Note: proper tail calls (`return getTransportCtx()`) drop the caller frame in JSC.
+ */
+function resolveCallerFilePath(skipper: (...args: never[]) => unknown): string | undefined {
+  const stackTraceLimit = Error.stackTraceLimit;
+  const prepareStackTrace: unknown = Reflect.get(Error, "prepareStackTrace");
+  const holder: { stack?: unknown } = {};
   try {
-    Error.prepareStackTrace = (_, stack) => stack;
-    const error = new Error();
-    Error.captureStackTrace(error, skipper);
-    const frames = error.stack as unknown as NodeJS.CallSite[];
-
-    for (const frame of frames) {
-      const rawFilePath = frame.getFileName();
-      if (!rawFilePath || rawFilePath.startsWith("node:")) {
-        continue;
-      }
-
-      const filePath = rawFilePath.startsWith("file://") ? fileURLToPath(rawFilePath) : rawFilePath;
-      const normalized = normalizeSeparators(filePath);
-      if (normalized === RUNTIME_FILE_PATH) {
-        continue;
-      }
-
-      return filePath;
-    }
+    Error.stackTraceLimit = 10;
+    Reflect.set(Error, "prepareStackTrace", undefined);
+    Error.captureStackTrace(holder, skipper);
   } catch {
     return undefined;
   } finally {
-    Error.prepareStackTrace = previousPrepareStackTrace;
+    Error.stackTraceLimit = stackTraceLimit;
+    Reflect.set(Error, "prepareStackTrace", prepareStackTrace);
   }
+  if (typeof holder.stack !== "string") return undefined;
 
+  for (const line of holder.stack.split("\n").slice(1)) {
+    const location = STACK_LOCATION.exec(line)?.[1];
+    if (!location) continue;
+    const filePath = location.startsWith("file://") ? fileURLToPath(location) : location;
+    if (normalizeSeparators(filePath) !== RUNTIME_FILE_PATH) return filePath;
+  }
   return undefined;
 }
 
@@ -300,22 +305,24 @@ function isTransportCtxCallAllowed(options: {
   guard: TransportCtxAccessGuard;
   callerFilePath: string | undefined;
 }): boolean {
-  if (!options.callerFilePath) {
+  const { guard, callerFilePath } = options;
+  if (!callerFilePath) {
     return true;
   }
 
-  const callerPath = resolvePhysicalPath(options.callerFilePath);
-  const normalizedRelative = normalizeSeparators(relative(options.guard.srcDir, callerPath));
+  const cached = guard.verdicts.get(callerFilePath);
+  if (cached !== undefined) return cached;
 
-  if (
-    normalizedRelative === ".." ||
-    normalizedRelative.startsWith("../") ||
-    normalizedRelative.startsWith("..\\")
-  ) {
-    return false;
-  }
-
-  return options.guard.globs.some((glob) => glob.match(normalizedRelative));
+  const normalizedRelative = normalizeSeparators(
+    relative(guard.srcDir, resolvePhysicalPath(callerFilePath)),
+  );
+  const allowed =
+    normalizedRelative !== ".." &&
+    !normalizedRelative.startsWith("../") &&
+    !normalizedRelative.startsWith("..\\") &&
+    guard.globs.some((glob) => glob.match(normalizedRelative));
+  guard.verdicts.set(callerFilePath, allowed);
+  return allowed;
 }
 
 function toDisplayPath(path: string | undefined): string {
@@ -383,9 +390,9 @@ async function importDefault(path: string): Promise<unknown> {
   // Serialize evaluation and expose a temporary scope only to files in this app.
   const scope: ImportScope = {
     build: runtimeGlobalState.buildContextStorage.getStore(),
-    module: runtimeGlobalState.moduleContextStorage.getStore(),
-    transport: runtimeGlobalState.transportContextStorage.getStore(),
-    guard: runtimeGlobalState.transportCtxAccessGuardStorage.getStore(),
+    module: runtimeGlobalState.moduleScopeStorage.getStore()?.ctx,
+    transport: runtimeGlobalState.transportScopeStorage.getStore()?.ctx,
+    guard: runtimeGlobalState.transportScopeStorage.getStore()?.guard,
   };
   const previous = runtimeGlobalState.importQueue;
   let release!: () => void;
@@ -515,21 +522,14 @@ function createConsoleBindings(logger: LoggerLike): ConsoleLike {
 function createFallbackConsoleLogger(logLevel: RuntimeDefaultConfig["LOG_LEVEL"]): LoggerLike {
   const fallbackConsole = runtimeGlobalState.baseConsole;
 
-  const shouldLog = (level: RuntimeDefaultConfig["LOG_LEVEL"]): boolean => {
-    if (logLevel === "silent") {
-      return false;
-    }
+  const threshold = logLevel === "silent" ? -1 : LOG_LEVELS.indexOf(logLevel);
+  const noop = () => {};
 
-    return LOG_LEVEL_INDEX[level] <= LOG_LEVEL_INDEX[logLevel];
-  };
-
-  const makeMethod = (level: RuntimeDefaultConfig["LOG_LEVEL"], method: keyof ConsoleLike) => {
-    const sinkMethod = fallbackConsole[method] ?? fallbackConsole.log;
-    const sink = sinkMethod.bind(fallbackConsole);
+  // Enabled levels write straight to the sink; disabled ones are no-ops (no per-call checks).
+  const makeMethod = (level: LogLevel, method: keyof ConsoleLike) => {
+    if (LOG_LEVELS.indexOf(level) > threshold) return noop;
+    const sink = (fallbackConsole[method] ?? fallbackConsole.log).bind(fallbackConsole);
     return (...args: unknown[]) => {
-      if (!shouldLog(level)) {
-        return;
-      }
       sink(...args);
     };
   };
@@ -679,108 +679,129 @@ function assignBusEntry(options: {
   current[leaf] = method;
 }
 
+const CALLABLE: Record<OperationKind, ReadonlySet<OperationKind>> = {
+  query: new Set(["query"]),
+  mutation: new Set(["query", "mutation"]),
+  action: new Set(["query", "mutation", "action"]),
+};
+
 function createBusMethod(options: {
   operation: LoadedOperation;
+  ctx: InternalModuleCtx;
   getRuntime: () => InternalRuntime;
 }): BusMethod<any, any> {
-  const { operation, getRuntime } = options;
+  const { operation, ctx, getRuntime } = options;
+  const { definition, kind, name } = operation;
+  // Prebuilt once per operation: a bus call is a single ALS run with no per-call allocations
+  // besides the handler context.
+  const scope: ModuleScope = { ctx, kind, name };
+  const handler = definition.handler as (ctx: unknown) => unknown;
 
-  const execute = async (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
-    const stack = runtimeGlobalState.callFrameStorage.getStore() ?? [];
-    const caller = stack[stack.length - 1];
-
-    if (caller && !isAllowedCall(caller.kind, operation.kind)) {
-      throw new Error(
-        `DISPATCHKIT_CQRS_GUARD: ${caller.kind} "${caller.name}" cannot call ${operation.kind} "${operation.name}"`,
-      );
-    }
-
-    const runtime = getRuntime();
-    const moduleCtx: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase> = {
-      config: runtime.config,
-      logger: runtime.logger,
-      infra: runtime.infra,
-      bus: runtime.bus,
+  const validate = (
+    schema: StandardSchemaV1,
+    value: unknown,
+    phase: "input" | "return",
+  ): unknown => {
+    const fail = (cause: unknown): never => {
+      throw wrapValidationError({ operation: name, phase, cause });
     };
-
-    if (runtimeGlobalState.disposedRuntimes.has(runtime)) {
-      throw new Error("DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal");
+    let result: unknown;
+    try {
+      result = runSchema(schema, value);
+    } catch (cause) {
+      fail(cause);
     }
-    const nextStack = [
-      ...stack,
-      { kind: operation.kind, name: operation.name } satisfies CallFrame,
-    ];
-    return runtimeGlobalState.callFrameStorage.run(nextStack, () =>
-      runtimeGlobalState.moduleContextStorage.run(moduleCtx, async () => {
-        let input = rawInput;
-        if (!unsafe && operation.definition.input) {
-          try {
-            input = await validateSchema(operation.definition.input, rawInput);
-          } catch (cause) {
-            throw wrapValidationError({ operation: operation.name, phase: "input", cause });
-          }
-        }
-        const result = await operation.definition.handler({ ...moduleCtx, input });
-        if (!unsafe && operation.definition.return) {
-          try {
-            return await validateSchema(operation.definition.return, result);
-          } catch (cause) {
-            throw wrapValidationError({ operation: operation.name, phase: "return", cause });
-          }
-        }
-        return result;
-      }),
-    );
+    return result instanceof Promise ? result.catch(fail) : result;
   };
 
-  const call = (async (input: unknown) => execute(input, false)) as BusMethod<any, any>;
-  call.$unsafe = async (input: unknown) => execute(input, true);
-  call.$input = operation.definition.input;
-  call.$return = operation.definition.return;
+  // Validation runs inside the operation scope so validators see the CQRS caller.
+  const runOperation = async (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
+    let input = rawInput;
+    if (!unsafe && definition.input) {
+      input = validate(definition.input, rawInput, "input");
+      if (input instanceof Promise) input = await input;
+    }
+    const result = await handler({ ...ctx, input });
+    return !unsafe && definition.return ? validate(definition.return, result, "return") : result;
+  };
+
+  // Not async: guard failures are returned as rejections, saving one promise layer per call.
+  const execute = (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
+    const caller = runtimeGlobalState.moduleScopeStorage.getStore();
+    if (caller?.kind && !CALLABLE[caller.kind].has(kind)) {
+      return Promise.reject(
+        new Error(
+          `DISPATCHKIT_CQRS_GUARD: ${caller.kind} "${caller.name}" cannot call ${kind} "${name}"`,
+        ),
+      );
+    }
+    if (runtimeGlobalState.disposedRuntimes.has(getRuntime())) {
+      return Promise.reject(
+        new Error("DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal"),
+      );
+    }
+    return runtimeGlobalState.moduleScopeStorage.run(scope, runOperation, rawInput, unsafe);
+  };
+
+  const call = ((input: unknown) => execute(input, false)) as BusMethod<any, any>;
+  call.$unsafe = (input: unknown) => execute(input, true);
+  call.$input = definition.input;
+  call.$return = definition.return;
   return call;
 }
 
-function wrapTransportWithContext(
-  value: unknown,
-  ctx: TransportContext<RuntimeConfig, RuntimeBusBase>,
-  guard: TransportCtxAccessGuard | undefined,
-): unknown {
+/** Native consumers read internal slots directly: HTTP bodies, binary data, web primitives. */
+function isNativeValue(input: object): boolean {
+  return (
+    input instanceof Response ||
+    input instanceof Request ||
+    input instanceof Headers ||
+    input instanceof Blob ||
+    input instanceof FormData ||
+    input instanceof URL ||
+    input instanceof URLSearchParams ||
+    input instanceof ArrayBuffer ||
+    input instanceof SharedArrayBuffer ||
+    ArrayBuffer.isView(input) ||
+    input instanceof ReadableStream ||
+    input instanceof WritableStream ||
+    input instanceof TransformStream ||
+    input instanceof AbortSignal ||
+    input instanceof AbortController
+  );
+}
+
+/** Descriptor of `key` on the prototype chain of `target` (own properties excluded). */
+function findInheritedDescriptor(target: object, key: PropertyKey): PropertyDescriptor | undefined {
+  for (
+    let current = Reflect.getPrototypeOf(target);
+    current !== null;
+    current = Reflect.getPrototypeOf(current)
+  ) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(current, key);
+    if (descriptor) return descriptor;
+  }
+  return undefined;
+}
+
+function wrapTransportWithContext(value: unknown, scope: TransportScope): unknown {
   const wrappers = new WeakMap<object, object>();
   const originals = runtimeGlobalState.transportOriginals;
+  const storage = runtimeGlobalState.transportScopeStorage;
   const isObject = (input: unknown): input is object =>
     input !== null && (typeof input === "object" || typeof input === "function");
   const unwrap = (input: unknown): unknown =>
     isObject(input) ? (originals.get(input) ?? input) : input;
-  const run = <T>(callback: () => T): T =>
-    runtimeGlobalState.transportContextStorage.run(ctx, () =>
-      runtimeGlobalState.transportCtxAccessGuardStorage.run(guard, callback),
-    );
+  const unwrapArgs = (args: unknown[]): unknown[] =>
+    args.some((arg) => isObject(arg) && originals.has(arg)) ? args.map((arg) => unwrap(arg)) : args;
+  const run = <T>(callback: () => T): T => storage.run(scope, callback);
 
   const wrap = (input: unknown): unknown => {
     if (!isObject(input)) return input;
-    // Native consumers inspect internal slots directly, without invoking proxy
-    // traps. Keep HTTP bodies, binary data and web primitives intact.
-    if (
-      input instanceof Response ||
-      input instanceof Request ||
-      input instanceof Headers ||
-      input instanceof Blob ||
-      input instanceof FormData ||
-      input instanceof URL ||
-      input instanceof URLSearchParams ||
-      input instanceof ArrayBuffer ||
-      input instanceof SharedArrayBuffer ||
-      ArrayBuffer.isView(input) ||
-      input instanceof ReadableStream ||
-      input instanceof WritableStream ||
-      input instanceof TransformStream ||
-      input instanceof AbortSignal ||
-      input instanceof AbortController
-    )
-      return input;
-    if (originals.has(input)) return input;
+    // Cache hits first: a method access must not pay for the native-type checks every time.
     const existing = wrappers.get(input);
     if (existing) return existing;
+    if (originals.has(input) || (typeof input === "object" && isNativeValue(input))) return input;
 
     // Resolve asynchronous fluent methods back to the same wrapped instance.
     // A native promise also keeps await/then compatible with internal slots.
@@ -793,6 +814,21 @@ function wrapTransportWithContext(
 
     const wrapped = new Proxy(input, {
       get(target, key) {
+        // Data properties (own or inherited, e.g. class methods) need no context to be read:
+        // skip the scope switch and only pay it for accessors, which may run user code.
+        const own = Reflect.getOwnPropertyDescriptor(target, key);
+        if (own) {
+          if ("value" in own) {
+            // Proxy invariants require the exact value of a frozen own property.
+            if (!own.configurable && !own.writable) return own.value as unknown;
+            return key === "constructor" ? (own.value as unknown) : wrap(own.value);
+          }
+        } else {
+          const inherited = findInheritedDescriptor(target, key);
+          if (inherited && "value" in inherited) {
+            return key === "constructor" ? (inherited.value as unknown) : wrap(inherited.value);
+          }
+        }
         return run(() => {
           // Accessors and methods must receive the original instance so private
           // fields and native internal slots (Map, Set, Date, etc.) remain valid.
@@ -819,7 +855,7 @@ function wrapTransportWithContext(
             Reflect.apply(
               target as (...args: unknown[]) => unknown,
               unwrap(receiver),
-              args.map(unwrap),
+              unwrapArgs(args),
             ),
           ),
         );
@@ -830,7 +866,7 @@ function wrapTransportWithContext(
             wrap(
               Reflect.construct(
                 target as new (...args: unknown[]) => object,
-                args.map(unwrap),
+                unwrapArgs(args),
                 unwrap(newTarget) as new (...args: unknown[]) => object,
               ),
             ) as object,
@@ -942,7 +978,7 @@ async function loadInfraModules(options: {
       config: options.ctx.config,
       logger: options.ctx.logger,
     };
-    const result = await runtimeGlobalState.moduleContextStorage.run(options.ctx, () =>
+    const result = await runtimeGlobalState.moduleScopeStorage.run({ ctx: options.ctx }, () =>
       Promise.resolve(definition.factory(infraCtx)),
     );
     if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -981,10 +1017,9 @@ async function loadTransportModules(options: {
   for (const module of options.transportModules) {
     const layerDir = module.source === "infra" ? "infra" : "transport";
     const absolute = toSourceFileFromRelative(join(options.srcDir, layerDir), module.filePath);
-    const definition = (await runtimeGlobalState.transportContextStorage.run(options.ctx, () =>
-      runtimeGlobalState.transportCtxAccessGuardStorage.run(undefined, () =>
-        importDefault(absolute),
-      ),
+    const definition = (await runtimeGlobalState.transportScopeStorage.run(
+      { ctx: options.ctx, guard: undefined },
+      () => importDefault(absolute),
     )) as TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
 
     if (!definition || definition.__dispatchkitType !== "transport") {
@@ -1012,10 +1047,9 @@ async function loadTransportModules(options: {
       allAllowPatterns.push(...moduleGuard.patterns);
     }
 
-    const result = await runtimeGlobalState.transportContextStorage.run(transportCtx, () =>
-      runtimeGlobalState.transportCtxAccessGuardStorage.run(moduleGuard, () =>
-        Promise.resolve(definition.factory(transportCtx)),
-      ),
+    const scope: TransportScope = { ctx: transportCtx, guard: moduleGuard };
+    const result = await runtimeGlobalState.transportScopeStorage.run(scope, () =>
+      Promise.resolve(definition.factory(transportCtx)),
     );
     if (Object.hasOwn(transport, module.key)) {
       throw new Error(
@@ -1023,7 +1057,7 @@ async function loadTransportModules(options: {
       );
     }
 
-    transport[module.key] = wrapTransportWithContext(result, transportCtx, moduleGuard);
+    transport[module.key] = wrapTransportWithContext(result, scope);
   }
 
   return {
@@ -1037,6 +1071,7 @@ async function loadTransportModules(options: {
 
 function buildBus(
   operations: LoadedOperation[],
+  ctx: InternalModuleCtx,
   getRuntime: () => InternalRuntime,
 ): RuntimeBusBase {
   const bus: RuntimeBusBase = {
@@ -1046,7 +1081,7 @@ function buildBus(
   };
 
   for (const operation of operations) {
-    const method = createBusMethod({ operation, getRuntime });
+    const method = createBusMethod({ operation, ctx, getRuntime });
     const section = bus[operation.kind];
 
     assignBusEntry({
@@ -1129,10 +1164,13 @@ async function resolveRuntimeConfig(options: {
 }
 
 export function getModuleCtx(): ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus> {
-  const stored = runtimeGlobalState.moduleContextStorage.getStore();
+  const stored = runtimeGlobalState.moduleScopeStorage.getStore()?.ctx;
   if (stored)
     return stored as unknown as ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus>;
-  const callerFilePath = resolveCallerFilePath(getModuleCtx);
+  // The caller only matters while application modules are being imported (or for errors).
+  const callerFilePath = runtimeGlobalState.importScope
+    ? resolveCallerFilePath(getModuleCtx)
+    : undefined;
   const imported = getImportScope(callerFilePath);
   const current = imported?.module;
   if (current) {
@@ -1145,7 +1183,7 @@ export function getModuleCtx(): ModuleContext<RuntimeConfigShape, RuntimeInfraSh
     throw createRuntimeError({
       code: "DISPATCHKIT_CONTEXT_UNAVAILABLE",
       message: "Module context is unavailable outside runtime execution",
-      where: toDisplayPath(callerFilePath),
+      where: toDisplayPath(callerFilePath ?? resolveCallerFilePath(getModuleCtx)),
       help: [
         "Call getModuleCtx() inside defineQuery/defineMutation/defineAction handlers or bus-invoked execution.",
         "If this call is on module top-level, move it into a function/handler so it runs during runtime execution.",
@@ -1162,13 +1200,15 @@ export function getModuleCtx(): ModuleContext<RuntimeConfigShape, RuntimeInfraSh
 }
 
 export function getTransportCtx(): TransportContext<RuntimeConfigShape, RuntimeBus> {
-  const callerFilePath = resolveCallerFilePath(getTransportCtx);
-  const imported = getImportScope(callerFilePath);
-  const stored = runtimeGlobalState.transportContextStorage.getStore();
-  const current = stored ?? imported?.transport;
+  const stored = runtimeGlobalState.transportScopeStorage.getStore();
+  // Stack inspection is the expensive part: only done for import scopes, allowlists and errors.
+  let callerFilePath =
+    !stored && runtimeGlobalState.importScope ? resolveCallerFilePath(getTransportCtx) : undefined;
+  const imported = stored ? undefined : getImportScope(callerFilePath);
+  const current = stored?.ctx ?? imported?.transport;
   const pending = runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build;
   const guard = stored
-    ? runtimeGlobalState.transportCtxAccessGuardStorage.getStore()
+    ? stored.guard
     : imported
       ? imported.guard
       : pending
@@ -1176,6 +1216,7 @@ export function getTransportCtx(): TransportContext<RuntimeConfigShape, RuntimeB
         : runtimeGlobalState.activeTransportCtxAccessGuard;
 
   if (guard) {
+    callerFilePath ??= resolveCallerFilePath(getTransportCtx);
     if (!isTransportCtxCallAllowed({ guard, callerFilePath })) {
       throw createRuntimeError({
         code: "DISPATCHKIT_CONTEXT_FORBIDDEN",
@@ -1202,7 +1243,7 @@ export function getTransportCtx(): TransportContext<RuntimeConfigShape, RuntimeB
     throw createRuntimeError({
       code: "DISPATCHKIT_CONTEXT_UNAVAILABLE",
       message: "Transport context is unavailable outside runtime execution",
-      where: toDisplayPath(callerFilePath),
+      where: toDisplayPath(callerFilePath ?? resolveCallerFilePath(getTransportCtx)),
       help: [
         "Call getTransportCtx() inside defineTransport factory or transport methods invoked from runtime.transport.",
         "If this call happens in an imported helper, allow it via defineTransport(..., { allowGetTransportCtxFrom: [...] }).",
@@ -1221,7 +1262,7 @@ export function getTransportCtx(): TransportContext<RuntimeConfigShape, RuntimeB
 export function buildRuntime(
   options: BuildRuntimeOptions = {},
 ): Promise<Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>> {
-  if (getImportScope(resolveCallerFilePath(buildRuntime))) {
+  if (runtimeGlobalState.importScope && getImportScope(resolveCallerFilePath(buildRuntime))) {
     return Promise.reject(
       new Error("DISPATCHKIT_REENTRANT_BUILD: Cannot build a runtime during module evaluation"),
     );
@@ -1274,13 +1315,14 @@ async function buildRuntimeImpl(
       },
     };
     runtimeRef = instance;
-    instance.bus = buildBus(loadedOperations, () => instance);
-    const moduleCtx: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase> = {
+    const moduleCtx: InternalModuleCtx = {
       config,
       logger,
       infra: instance.infra,
       bus: instance.bus,
     };
+    instance.bus = buildBus(loadedOperations, moduleCtx, () => instance);
+    moduleCtx.bus = instance.bus;
     const infraResult = await loadInfraModules({
       srcDir,
       discovery,

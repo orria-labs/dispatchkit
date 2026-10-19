@@ -81,6 +81,8 @@ async function measure({ iterations, run }: Scenario): Promise<number> {
     const result = run();
     if (result instanceof Promise) await result;
   };
+  // Start every scenario from a collected heap so earlier allocations do not skew it.
+  Bun.gc(true);
   for (let index = 0; index < Math.min(iterations, 5_000); index += 1) await call();
 
   const samples: number[] = [];

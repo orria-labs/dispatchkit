@@ -23,6 +23,23 @@ export function assertStandardSchema(schema: unknown): asserts schema is Standar
   }
 }
 
+/**
+ * Validates and stays synchronous when the validator is synchronous (no extra microtasks on the
+ * bus hot path). Issues become a `StandardSchemaError`; validator exceptions propagate as-is.
+ * The schema must already be checked with `assertStandardSchema`.
+ */
+export function runSchema(schema: StandardSchemaV1, input: unknown): unknown {
+  const result = schema["~standard"].validate(input);
+  if (result instanceof Promise) {
+    return result.then((settled) => {
+      if (settled.issues) throw new StandardSchemaError(settled.issues);
+      return settled.value;
+    });
+  }
+  if (result.issues) throw new StandardSchemaError(result.issues);
+  return result.value;
+}
+
 export async function validateSchema<TSchema extends StandardSchemaV1>(
   schema: TSchema,
   input: unknown,
