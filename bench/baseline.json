@@ -7,15 +7,15 @@
     "date": "2026-10-20"
   },
   "results": {
-    "bus: query without schema": 173.2,
-    "bus: query $unsafe": 172.3,
-    "bus: query with zod input": 197.8,
-    "bus: query with valibot input": 212.3,
-    "bus: nested query (2 levels)": 351.7,
-    "transport: plain object method": 191.8,
-    "transport: class instance method": 205.8,
-    "transport: getTransportCtx() from own file": 3189.5,
-    "transport: getTransportCtx() via allowlist": 2970.6,
-    "buildRuntime (warm, 7 modules)": 292127.8
+    "bus: query without schema": 174.3,
+    "bus: query $unsafe": 180.3,
+    "bus: query with zod input": 324.5,
+    "bus: query with valibot input": 292.4,
+    "bus: nested query (2 levels)": 336.3,
+    "transport: plain object method": 199.8,
+    "transport: class instance method": 201.9,
+    "transport: getTransportCtx() from own file": 3316.1,
+    "transport: getTransportCtx() via allowlist": 3167.8,
+    "buildRuntime (warm, 7 modules)": 303200.4
   }
 }

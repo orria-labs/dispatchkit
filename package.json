@@ -24,7 +24,8 @@
     "test": "bun test ./test",
     "verify": "bun fmt --check && bun lint --max-warnings=0 && bun check && bun test ./test",
     "bench": "bun run bench/runtime.bench.ts",
-    "bench:update": "bun run bench/runtime.bench.ts --update"
+    "bench:update": "bun run bench/runtime.bench.ts --update",
+    "bench:compare": "bun run bench/compare.ts"
   },
   "exports": {
     ".": {

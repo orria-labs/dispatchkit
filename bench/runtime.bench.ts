@@ -1,11 +1,16 @@
 /**
  * Runtime micro-benchmarks.
  *
- *   bun run bench               compare with bench/baseline.json
- *   bun run bench -- --check    exit 1 when a scenario regresses beyond the threshold (default 25%)
- *   bun run bench:update        rewrite bench/baseline.json
+ *   bun run bench                 compare with bench/baseline.json
+ *   bun run bench -- --check      exit 1 when a scenario is slower than the threshold (default 5%)
+ *   bun run bench:update          rewrite bench/baseline.json
+ *   bun bench/runtime.bench.ts --json --runs 1   machine-readable results (used by compare.ts)
  *
- * Every scenario reports the median ns/op of several rounds after warmup.
+ * Each scenario measures the median ns/op of 7 rounds after a GC and warmup; with `--runs N`
+ * (default 3) the whole suite repeats N times and the best run is reported (background load
+ * only adds time, so the minimum is the least noisy estimate; bench:compare uses the same).
+ * For change-vs-change decisions prefer `bun run bench:compare`, which alternates both versions
+ * in one session and is far less sensitive to machine load than a stored baseline.
  */
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
@@ -30,7 +35,9 @@ const { values } = parseArgs({
   options: {
     update: { type: "boolean" },
     check: { type: "boolean" },
-    threshold: { type: "string", default: "25" },
+    json: { type: "boolean" },
+    runs: { type: "string", default: "3" },
+    threshold: { type: "string", default: "5" },
   },
 });
 
@@ -151,14 +158,25 @@ try {
     },
     {
       name: "buildRuntime (warm, 7 modules)",
-      iterations: 30,
+      iterations: 100,
       run: () => buildRuntime(buildOptions),
     },
   ];
 
-  const results: Record<string, number> = {};
-  for (const scenario of scenarios) {
-    results[scenario.name] = await measure(scenario);
+  const runs = Math.max(1, Number(values.runs) || 1);
+  const samples: Record<string, number[]> = {};
+  for (let run = 0; run < runs; run += 1) {
+    for (const scenario of scenarios) {
+      (samples[scenario.name] ??= []).push(await measure(scenario));
+    }
+  }
+  const results: Record<string, number> = Object.fromEntries(
+    scenarios.map(({ name }) => [name, Math.min(...samples[name]!)]),
+  );
+
+  if (values.json) {
+    console.log(JSON.stringify(results));
+    process.exit(0);
   }
 
   const baseline = await readBaseline();
@@ -177,7 +195,9 @@ try {
     };
   });
 
-  console.log(`cold buildRuntime: ${coldBuildMs.toFixed(1)} ms (first import of all modules)`);
+  console.log(
+    `cold buildRuntime: ${coldBuildMs.toFixed(1)} ms (first import of all modules); ${runs} run(s)`,
+  );
   console.table(rows);
 
   if (values.update) {
