@@ -41,6 +41,7 @@ export type BusMethod<
 };
 
 export interface BusNamespace {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-level wildcard
   [key: string]: BusMethod<any, any> | BusNamespace;
 }
 
@@ -178,6 +179,7 @@ export type OperationInput<T> = T extends { readonly input?: infer TSchema }
 
 export type OperationReturn<T> = T extends {
   readonly return?: infer TSchema;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-level wildcard
   readonly handler: (...args: any[]) => infer TResult;
 }
   ? SchemaOutput<TSchema, Awaited<TResult>>
@@ -187,6 +189,7 @@ export type OperationBusMethod<
   T extends {
     readonly input?: Schema;
     readonly return?: Schema;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-level wildcard
     readonly handler: (...args: any[]) => any;
   },
 > = BusMethod<
@@ -282,15 +285,19 @@ export type UnionToIntersection<T> = (T extends unknown ? (value: T) => void : n
   : never;
 
 export type InferInfraModule<T> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-level wildcard
   T extends InfraDefinition<any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
 
 export type InferTransportModule<T> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-level wildcard
   T extends TransportDefinition<any, any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
 
 export type InferConfigFromDefinition<T> =
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- neutral in `RuntimeDefaultConfig & ...`
   T extends ConfigDefinition<infer TSchema> ? SchemaOutput<TSchema> : {};
 
 export type InferLoggerFromDefinition<T> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-level wildcard
   T extends LoggerDefinition<any, infer TLogger> ? TLogger : LoggerLike;
 
 export interface DiscoveredOperation {

@@ -2,7 +2,7 @@ import { dirname, join, relative } from "node:path";
 
 import { compareStrings, resolveTransportKey } from "./discovery.ts";
 import { DispatchkitError } from "./errors.ts";
-import type { DiscoveredTransport, DiscoveryResult } from "./types.ts";
+import type { DiscoveryResult } from "./types.ts";
 
 type ManifestShape = {
   meta: {

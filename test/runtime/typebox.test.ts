@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- runtime.bus/transport are untyped here: these tests do not load generated types */
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 

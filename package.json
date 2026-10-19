@@ -22,7 +22,7 @@
     "build": "bun run clean && tsc -p tsconfig.build.json && node ./scripts/postbuild.mjs && chmod +x dist/cli.js",
     "prepack": "bun run verify && bun run build",
     "test": "bun test ./test",
-    "verify": "bun fmt --check && bun check && bun test ./test",
+    "verify": "bun fmt --check && bun lint --max-warnings=0 && bun check && bun test ./test",
     "bench": "bun run bench/runtime.bench.ts",
     "bench:update": "bun run bench/runtime.bench.ts --update"
   },

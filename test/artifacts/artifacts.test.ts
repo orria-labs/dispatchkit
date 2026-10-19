@@ -33,7 +33,7 @@ describe("artifacts generation", () => {
         const busTypes = readFileSync(busTypesPath, "utf8");
         const runtimeTypes = readFileSync(runtimeTypesPath, "utf8");
         const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-          transport: Array<{ key: string; source: string }>;
+          transport: Array<{ key: string; filePath: string; source: string }>;
         };
 
         expect(busTypes).toContain('"widget": {');
@@ -41,7 +41,6 @@ describe("artifacts generation", () => {
         expect(runtimeTypes).toContain("InferConfigFromDefinition<typeof AppConfigDefinition>");
         expect(runtimeTypes).toContain("InferLoggerFromDefinition<typeof AppLoggerDefinition>");
         expect(manifest.transport).toEqual([
-          // @ts-expect-error
           { key: "http", filePath: "http.ts", source: "transport" },
         ]);
       },
@@ -266,10 +265,10 @@ describe("artifacts runtime outputs", () => {
         expect(busTypes.includes("GeneratedTransport")).toBe(true);
         expect(busTypes.includes('"my-transport"')).toBe(true);
         expect(busTypes.includes('"my-second-transport"')).toBe(true);
-        expect((runtime.transport as Record<string, unknown>)["my-transport"]).toEqual({
+        expect(runtime.transport["my-transport"]).toEqual({
           kind: "first",
         });
-        expect((runtime.transport as Record<string, unknown>)["my-second-transport"]).toEqual({
+        expect(runtime.transport["my-second-transport"]).toEqual({
           kind: "second",
         });
 

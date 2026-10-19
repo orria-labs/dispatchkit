@@ -104,7 +104,7 @@ describe("Elysia 2 / TypeBox 1 Standard Schema adapter", () => {
     // Basic Blob/size validation is synchronous and remains supported.
     const sized = standardSchema(t.File({ minSize: 2 }));
     expect(sized["~standard"].validate(new File(["ok"], "file.txt"))).toEqual({
-      value: expect.any(File),
+      value: expect.any(File) as File,
     });
   });
 

@@ -23,7 +23,7 @@ function assertSynchronousRefinements(...schemas: unknown[]): void {
     for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
       if ("value" in descriptor) visit(descriptor.value);
     }
-    const prototype = Object.getPrototypeOf(value);
+    const prototype = Object.getPrototypeOf(value) as object | null;
     if (
       prototype !== Object.prototype &&
       prototype !== Array.prototype &&
@@ -39,7 +39,7 @@ function assertSynchronousRefinements(...schemas: unknown[]): void {
 function cloneData(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
   if (typeof value !== "object" || value === null) return value;
   if (seen.has(value)) return seen.get(value);
-  const prototype = Object.getPrototypeOf(value);
+  const prototype = Object.getPrototypeOf(value) as object | null;
   if (prototype === Date.prototype) return new Date((value as Date).getTime());
   if (prototype === RegExp.prototype) {
     const clone = new RegExp(value as RegExp);
@@ -62,7 +62,9 @@ function cloneData(value: unknown, seen = new WeakMap<object, unknown>()): unkno
     return clone;
   }
   if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
-  const clone = Array.isArray(value) ? new Array(value.length) : Object.create(prototype);
+  const clone: object = Array.isArray(value)
+    ? new Array<unknown>(value.length)
+    : (Object.create(prototype) as object);
   seen.set(value, clone);
   for (const key of Reflect.ownKeys(value)) {
     if (Array.isArray(value) && key === "length") continue;
@@ -111,6 +113,7 @@ function issuePath(value: unknown, path: string): string[] | undefined {
  * conversion, defaults, or cleaning. Plain data containers are cloned before
  * decoding; opaque class instances and user callbacks retain TypeBox semantics.
  */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- public default, kept as in 1.1
 export function standardSchema<const T extends TSchema, const C extends TProperties = {}>(
   schema: T,
   context?: C,

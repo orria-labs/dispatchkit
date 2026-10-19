@@ -49,7 +49,7 @@ export async function validateSchema<TSchema extends StandardSchemaV1>(
   assertStandardSchema(schema);
   const result = await schema["~standard"].validate(input);
   if (result.issues) throw new StandardSchemaError(result.issues);
-  return result.value as StandardSchemaV1.InferOutput<TSchema>;
+  return result.value;
 }
 
 const TYPED_VENDOR = "@orria/dispatchkit/typed";

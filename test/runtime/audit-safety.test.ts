@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- runtime.bus/transport are untyped here: these tests do not load generated types */
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 
@@ -128,7 +129,7 @@ export default defineTransport(() => ({
           expect(response.status).toBe(200);
           expect(await response.text()).toBe("native response");
         } finally {
-          server.stop(true);
+          await server.stop(true);
           await runtime.dispose();
         }
       },
@@ -175,11 +176,12 @@ const runtime = await buildRuntime({ rootDir, LOG_LEVEL: "debug" });
 runtime.logger.error("audit-error-visible");
 runtime.logger.debug("audit-debug-visible");`,
       },
-      async (rootDir) => {
+      (rootDir) => {
         const result = runCommand([process.execPath, "probe.ts"], rootDir);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toContain("audit-error-visible");
         expect(result.stdout + result.stderr).toContain("audit-debug-visible");
+        return Promise.resolve();
       },
     );
   });

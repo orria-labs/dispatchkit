@@ -6,11 +6,12 @@ export function createLifecycle() {
   const callbacks: Array<() => void | Promise<void>> = [];
   let disposal: Promise<void> | undefined;
   let disposed = false;
+  // Arrow functions: `onDispose` is handed to factories as a detached callback.
   return {
     get disposed() {
       return disposed;
     },
-    onDispose(callback: () => void | Promise<void>) {
+    onDispose: (callback: () => void | Promise<void>): void => {
       if (disposed)
         throw new DispatchkitError(
           "DISPATCHKIT_RUNTIME_DISPOSED: Cannot register cleanup after disposal",
@@ -19,7 +20,7 @@ export function createLifecycle() {
       const runInContext = AsyncLocalStorage.snapshot();
       callbacks.push(() => runInContext(callback));
     },
-    dispose(): Promise<void> {
+    dispose: (): Promise<void> => {
       if (disposal) return disposal;
       disposed = true;
       // Defer callbacks so reentrant calls observe the same disposal promise.

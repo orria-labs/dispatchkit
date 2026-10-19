@@ -13,7 +13,7 @@ function checkedCommand(command: string[], cwd: string): ReturnType<typeof runCo
   return result;
 }
 
-async function withPackagedConsumer(files: FileMap, run: (rootDir: string) => void): Promise<void> {
+function withPackagedConsumer(files: FileMap, run: (rootDir: string) => void): Promise<void> {
   const rootDir = mkdtempSync(join(tmpdir(), "dispatchkit-consumer-"));
   try {
     const nodeModules = join(rootDir, "node_modules");
@@ -50,6 +50,7 @@ async function withPackagedConsumer(files: FileMap, run: (rootDir: string) => vo
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }
+  return Promise.resolve();
 }
 
 const imports = `import { defineAction, defineConfig, defineInfra, defineMutation, defineQuery, defineTransport } from "@orria/dispatchkit";`;

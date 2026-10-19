@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- runtime.bus/transport are untyped here: these tests do not load generated types */
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 
@@ -130,9 +131,7 @@ describe("runtime validation", () => {
 
         await expect(bus.mutation.check({ value: "1" })).rejects.toThrow("input validation");
         await expect(bus.mutation.check({ value: 13 })).rejects.toThrow("return validation");
-        await expect(
-          bus.mutation.check.$unsafe({ value: "1" } as unknown as { value: number }),
-        ).resolves.toEqual({
+        await expect(bus.mutation.check.$unsafe({ value: "1" })).resolves.toEqual({
           value: "1",
         });
       },

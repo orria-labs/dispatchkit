@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access -- runtime.bus/transport are untyped here: these tests do not load generated types */
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 
@@ -102,7 +103,7 @@ describe("cli", () => {
           throw new Error(`Watch did not update before timeout. Output: ${output}`);
         };
         try {
-          await waitFor(async () => output.includes("watching"));
+          await waitFor(() => Promise.resolve(output.includes("watching")));
           await Bun.write(
             join(rootDir, "src/shared/definition.ts"),
             `${dispatchkitImportLine()}\nexport default defineTransport(() => ({}));`,
