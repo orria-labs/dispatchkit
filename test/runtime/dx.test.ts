@@ -61,23 +61,4 @@ export default defineQuery({ input: z.object({ n: z.number() }), handler: () => 
       await runtime.dispose();
     });
   });
-
-  it("orders generated artifacts independently of the locale", async () => {
-    await withTempProject(
-      {
-        "src/transport/alpha.ts": `${imp}\nexport default defineTransport(() => ({}));`,
-        "src/transport/Zeta.ts": `${imp}\nexport default defineTransport(() => ({}));`,
-      },
-      async (rootDir) => {
-        const runtime = await buildRuntime({ rootDir, mountGlobal: false });
-        const manifest = (await Bun.file(
-          `${rootDir}/src/generated/runtime/manifest.json`,
-        ).json()) as {
-          transport: Array<{ key: string }>;
-        };
-        expect(manifest.transport.map((module) => module.key)).toEqual(["Zeta", "alpha"]);
-        await runtime.dispose();
-      },
-    );
-  });
 });

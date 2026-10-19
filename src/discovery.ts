@@ -15,13 +15,8 @@ const NON_ALNUM = /[^a-zA-Z0-9]+/g;
 
 const normalizeSeparators = (value: string) => value.replace(/\\/g, "/");
 
-/** Code-point order: generated artifacts must not depend on the machine's locale. */
-export function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function sortUnique(values: string[]): string[] {
-  return [...new Set(values)].sort(compareStrings);
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
 function toCamelSegment(input: string): string {

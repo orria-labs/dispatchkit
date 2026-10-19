@@ -1,6 +1,6 @@
 import { dirname, join, relative } from "node:path";
 
-import { compareStrings, resolveTransportKey } from "./discovery.ts";
+import { resolveTransportKey } from "./discovery.ts";
 import { DispatchkitError } from "./errors.ts";
 import type { DiscoveryResult } from "./types.ts";
 
@@ -81,7 +81,7 @@ function buildTree(
 function renderTree(node: TreeNode, methodsByName: Map<string, string>, indent = "  "): string[] {
   const lines: string[] = [];
 
-  const keys = [...node.children.keys()].sort(compareStrings);
+  const keys = [...node.children.keys()].sort((left, right) => left.localeCompare(right));
   for (const key of keys) {
     const child = node.children.get(key)!;
     if (child.methodKey && child.children.size === 0) {
@@ -123,7 +123,7 @@ function createInfraType(options: {
   }
 
   const lines = options.aliases
-    .sort((left, right) => compareStrings(left.key, right.key))
+    .sort((left, right) => left.key.localeCompare(right.key))
     .map(({ alias, key }) => `  ${JSON.stringify(key)}: InferInfraModule<typeof ${alias}>;`);
 
   return `export interface GeneratedInfra {\n${lines.join("\n")}\n}`;
@@ -135,7 +135,7 @@ function createTransportType(options: { aliases: Array<{ alias: string; key: str
   }
 
   const lines = options.aliases
-    .sort((left, right) => compareStrings(left.key, right.key))
+    .sort((left, right) => left.key.localeCompare(right.key))
     .map(({ alias, key }) => `  ${JSON.stringify(key)}: InferTransportModule<typeof ${alias}>;`);
 
   return `export interface GeneratedTransport {\n${lines.join("\n")}\n}`;
@@ -316,13 +316,13 @@ function getManifestDiscoveryPayload(discovery: DiscoveryResult): {
       }))
       .sort(
         (left, right) =>
-          compareStrings(left.kind, right.kind) ||
-          compareStrings(left.name, right.name) ||
-          compareStrings(left.filePath, right.filePath),
+          left.kind.localeCompare(right.kind) ||
+          left.name.localeCompare(right.name) ||
+          left.filePath.localeCompare(right.filePath),
       ),
     infra: discovery.infra
       .map((filePath) => ({ filePath }))
-      .sort((left, right) => compareStrings(left.filePath, right.filePath)),
+      .sort((left, right) => left.filePath.localeCompare(right.filePath)),
     transport: discovery.transport
       .map((module) => ({
         key: module.key,
@@ -331,9 +331,9 @@ function getManifestDiscoveryPayload(discovery: DiscoveryResult): {
       }))
       .sort(
         (left, right) =>
-          compareStrings(left.key, right.key) ||
-          compareStrings(left.source, right.source) ||
-          compareStrings(left.filePath, right.filePath),
+          left.key.localeCompare(right.key) ||
+          left.source.localeCompare(right.source) ||
+          left.filePath.localeCompare(right.filePath),
       ),
   };
 }

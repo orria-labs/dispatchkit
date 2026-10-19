@@ -2,7 +2,7 @@ import { mkdirSync, statSync, watch } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { createModuleClassifier } from "./classify.ts";
-import { compareStrings, discoverRuntimeFiles, resolveTransportKey } from "./discovery.ts";
+import { discoverRuntimeFiles, resolveTransportKey } from "./discovery.ts";
 import { DispatchkitError } from "./errors.ts";
 import { generateArtifacts } from "./typegen.ts";
 import type { DiscoveredTransport, DiscoveryResult, TransportSource } from "./types.ts";
@@ -41,9 +41,9 @@ function normalizeSeparators(value: string): string {
 function sortTransport(modules: DiscoveredTransport[]): DiscoveredTransport[] {
   return [...modules].sort(
     (left, right) =>
-      compareStrings(left.key, right.key) ||
-      compareStrings(left.source, right.source) ||
-      compareStrings(left.filePath, right.filePath),
+      left.key.localeCompare(right.key) ||
+      left.source.localeCompare(right.source) ||
+      left.filePath.localeCompare(right.filePath),
   );
 }
 
@@ -144,10 +144,15 @@ function isWatchedChange(srcDir: string, generatedDir: string, fileName: string)
   if (generatedFromSrc === normalized || generatedFromSrc.startsWith(`${normalized}/`)) {
     return false;
   }
-  if (DECLARATION_FILE.test(normalized)) return false;
-  if (WATCHED_EXTENSION.test(normalized)) return true;
-  const stats = statSync(join(srcDir, fileName), { throwIfNoEntry: false });
-  return !stats || stats.isDirectory();
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(join(srcDir, fileName), { throwIfNoEntry: false });
+  } catch {
+    return true; // unreadable (e.g. a symlink loop): regenerate rather than miss a change
+  }
+  // Directories (even named `v1.0/` or `x.d.ts/`) and vanished paths may hold modules.
+  if (!stats || stats.isDirectory()) return true;
+  return WATCHED_EXTENSION.test(normalized) && !DECLARATION_FILE.test(normalized);
 }
 
 export async function generateRuntime(
@@ -234,6 +239,8 @@ export async function watchRuntime(options: WatchRuntimeOptions = {}): Promise<v
     const initial = await generateRuntime(options);
     onInfo(`[dispatchkit] generated runtime artifacts: ${describe(initial)}`);
   } catch (error) {
+    clearTimeout(timer);
+    pending = false;
     watcher.close();
     throw error;
   } finally {

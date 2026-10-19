@@ -6,7 +6,7 @@ import { parseEnv, types } from "node:util";
 
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
-import { compareStrings, resolveTransportKey, toSourceFileFromRelative } from "./discovery.ts";
+import { resolveTransportKey, toSourceFileFromRelative } from "./discovery.ts";
 import { DispatchkitError } from "./errors.ts";
 import { discoverForArtifacts } from "./generate.ts";
 import { createLifecycle } from "./lifecycle.ts";
@@ -39,7 +39,6 @@ import type {
 } from "./types.ts";
 import {
   assertStandardSchema,
-  isThenable,
   isTypedSchema,
   runSchema,
   StandardSchemaError,
@@ -693,21 +692,18 @@ function createBusMethod(options: {
   const inputSchema = isTypedSchema(definition.input) ? undefined : definition.input;
   const returnSchema = isTypedSchema(definition.return) ? undefined : definition.return;
 
-  const validate = (
+  // Validation is always awaited (as in 1.1): handlers start after a microtask, and thenables
+  // or throwing `then` getters in validated values are reported as validation errors.
+  const validate = async (
     schema: StandardSchemaV1,
     value: unknown,
     phase: "input" | "return",
-  ): unknown => {
-    const fail = (cause: unknown): never => {
-      throw wrapValidationError({ operation: name, phase, cause });
-    };
-    let result: unknown;
+  ): Promise<unknown> => {
     try {
-      result = runSchema(schema, value);
+      return await runSchema(schema, value);
     } catch (cause) {
-      fail(cause);
+      throw wrapValidationError({ operation: name, phase, cause });
     }
-    return isThenable(result) ? Promise.resolve(result).catch(fail) : result;
   };
 
   // Validation runs inside the operation scope so validators see the CQRS caller.
@@ -716,49 +712,48 @@ function createBusMethod(options: {
     rawInput: unknown,
     unsafe: boolean,
   ): Promise<unknown> => {
-    let input = rawInput;
-    if (!unsafe && inputSchema) {
-      input = validate(inputSchema, rawInput, "input");
-      if (isThenable(input)) input = await input;
-    }
+    const input =
+      !unsafe && inputSchema ? await validate(inputSchema, rawInput, "input") : rawInput;
     // Called as a method, as before: handlers may rely on `this` being the definition.
     const result = await definition.handler({ ...ctx, input });
     return !unsafe && returnSchema ? validate(returnSchema, result, "return") : result;
   };
 
-  // Not async: guard failures are returned as rejections, saving one promise layer per call.
+  // Not async (saves one promise layer per call), but every failure is still a rejection.
   const execute = (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
-    const caller = runtimeGlobalState.moduleScopeStorage.getStore();
-    if (caller?.kind && !CALLABLE[caller.kind].has(kind)) {
-      return Promise.reject(
-        new DispatchkitError(
+    try {
+      const caller = runtimeGlobalState.moduleScopeStorage.getStore();
+      if (caller?.kind && !CALLABLE[caller.kind].has(kind)) {
+        throw new DispatchkitError(
           `DISPATCHKIT_CQRS_GUARD: ${caller.kind} "${caller.name}" cannot call ${kind} "${name}"`,
-        ),
-      );
-    }
-    const runtime = getRuntime();
-    if (runtimeGlobalState.disposedRuntimes.has(runtime)) {
-      return Promise.reject(
-        new DispatchkitError(
+        );
+      }
+      const runtime = getRuntime();
+      // A fresh context per call (as in 1.1): handlers may mutate it, and runtime fields may be
+      // reassigned after the build.
+      const ctx: InternalModuleCtx = {
+        config: runtime.config,
+        logger: runtime.logger,
+        infra: runtime.infra,
+        bus: runtime.bus,
+      };
+      if (runtimeGlobalState.disposedRuntimes.has(runtime)) {
+        throw new DispatchkitError(
           "DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal",
-        ),
+        );
+      }
+      return runtimeGlobalState.moduleScopeStorage.run(
+        { ctx, kind, name },
+        runOperation,
+        ctx,
+        rawInput,
+        unsafe,
       );
+    } catch (error) {
+      // Rethrows whatever user code threw (e.g. a getter on runtime fields), as an async fn would.
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      return Promise.reject(error);
     }
-    // A fresh context per call (as in 1.1): handlers may mutate it, and runtime fields may be
-    // reassigned after the build.
-    const ctx: InternalModuleCtx = {
-      config: runtime.config,
-      logger: runtime.logger,
-      infra: runtime.infra,
-      bus: runtime.bus,
-    };
-    return runtimeGlobalState.moduleScopeStorage.run(
-      { ctx, kind, name },
-      runOperation,
-      ctx,
-      rawInput,
-      unsafe,
-    );
   };
 
   const call = ((input: unknown) => execute(input, false)) as InternalBusMethod;
@@ -844,7 +839,11 @@ function wrapTransportWithContext(value: unknown, scope: TransportScope): unknow
           if (data && "value" in data) {
             // Proxy invariants require the exact value of a frozen own property.
             if (own && !own.configurable && !own.writable) return own.value as unknown;
-            return key === "constructor" ? (data.value as unknown) : wrap(data.value);
+            if (key === "constructor") return data.value as unknown;
+            // Cache hits stay outside the scope; creating a wrapper may run user traps.
+            const value: unknown = data.value;
+            const cached = isObject(value) ? wrappers.get(value) : undefined;
+            return cached ?? run(() => wrap(value));
           }
         }
         return run(() => {
@@ -1357,9 +1356,9 @@ async function buildRuntimeImpl(
     };
     const transportModules = [...discovery.transport, ...infraResult.transportFromInfra].sort(
       (left, right) =>
-        compareStrings(left.key, right.key) ||
-        compareStrings(left.source, right.source) ||
-        compareStrings(left.filePath, right.filePath),
+        left.key.localeCompare(right.key) ||
+        left.source.localeCompare(right.source) ||
+        left.filePath.localeCompare(right.filePath),
     );
     // Validate collisions before starting any transport resources.
     const transportKeys = new Set<string>();
