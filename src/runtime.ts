@@ -2,9 +2,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseEnv } from "node:util";
 
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import dotenv from "dotenv";
 
 import { resolveTransportKey, toSourceFileFromRelative } from "./discovery.ts";
 import { discoverForArtifacts } from "./generate.ts";
@@ -462,7 +462,7 @@ async function readEnvFile(path: string): Promise<Record<string, string>> {
     return {};
   }
 
-  return dotenv.parse(await file.text());
+  return parseEnv(await file.text()) as Record<string, string>;
 }
 
 async function resolveConfigSchema(srcDir: string): Promise<StandardSchemaV1 | undefined> {
