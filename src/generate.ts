@@ -2,7 +2,8 @@ import { mkdirSync, watch } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { createModuleClassifier } from "./classify.ts";
-import { discoverRuntimeFiles, resolveTransportKey } from "./discovery.ts";
+import { compareStrings, discoverRuntimeFiles, resolveTransportKey } from "./discovery.ts";
+import { DispatchkitError } from "./errors.ts";
 import { generateArtifacts } from "./typegen.ts";
 import type { DiscoveredTransport, DiscoveryResult, TransportSource } from "./types.ts";
 
@@ -40,9 +41,9 @@ function normalizeSeparators(value: string): string {
 function sortTransport(modules: DiscoveredTransport[]): DiscoveredTransport[] {
   return [...modules].sort(
     (left, right) =>
-      left.key.localeCompare(right.key) ||
-      left.source.localeCompare(right.source) ||
-      left.filePath.localeCompare(right.filePath),
+      compareStrings(left.key, right.key) ||
+      compareStrings(left.source, right.source) ||
+      compareStrings(left.filePath, right.filePath),
   );
 }
 
@@ -82,7 +83,7 @@ function assertTransportNoCollisions(modules: DiscoveredTransport[]): void {
   for (const module of modules) {
     const existing = keyToModule.get(module.key);
     if (existing) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_DISCOVERY_TRANSPORT_COLLISION: Transport key "${module.key}" collides between "${existing.filePath}" (${existing.source}) and "${module.filePath}" (${module.source})`,
       );
     }
@@ -167,11 +168,15 @@ export async function watchRuntime(options: WatchRuntimeOptions = {}): Promise<v
     options.intervalMs !== undefined &&
     (!Number.isFinite(options.intervalMs) || options.intervalMs < 50)
   ) {
-    throw new Error("DISPATCHKIT_WATCH_INVALID_INTERVAL: intervalMs must be a number >= 50");
+    throw new DispatchkitError(
+      "DISPATCHKIT_WATCH_INVALID_INTERVAL: intervalMs must be a number >= 50",
+    );
   }
   const debounceMs = options.debounceMs ?? options.intervalMs ?? 100;
   if (!Number.isFinite(debounceMs) || debounceMs < 0) {
-    throw new Error("DISPATCHKIT_WATCH_INVALID_INTERVAL: debounceMs must be a number >= 0");
+    throw new DispatchkitError(
+      "DISPATCHKIT_WATCH_INVALID_INTERVAL: debounceMs must be a number >= 0",
+    );
   }
   const onInfo = options.onInfo ?? (() => {});
   const onError = options.onError ?? (() => {});

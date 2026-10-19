@@ -1,7 +1,9 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
-export class StandardSchemaError extends Error {
-  readonly code = "DISPATCHKIT_SCHEMA_VALIDATION_ERROR";
+import { DispatchkitError } from "./errors.ts";
+
+export class StandardSchemaError extends DispatchkitError {
+  override readonly code = "DISPATCHKIT_SCHEMA_VALIDATION_ERROR";
 
   constructor(readonly issues: ReadonlyArray<StandardSchemaV1.Issue>) {
     super(issues.map((issue) => issue.message).join("; ") || "Schema validation failed");
@@ -48,4 +50,24 @@ export async function validateSchema<TSchema extends StandardSchemaV1>(
   const result = await schema["~standard"].validate(input);
   if (result.issues) throw new StandardSchemaError(result.issues);
   return result.value as StandardSchemaV1.InferOutput<TSchema>;
+}
+
+const TYPED_VENDOR = "@orria/dispatchkit/typed";
+
+const typedSchema: StandardSchemaV1 = {
+  "~standard": { version: 1, vendor: TYPED_VENDOR, validate: (value) => ({ value }) },
+};
+
+/**
+ * Type-only schema: gives `input`, `return` or config a TypeScript type without runtime
+ * validation (the bus skips it entirely).
+ *
+ * @example defineQuery({ input: typed<{ id: string }>(), handler: ({ input }) => input.id })
+ */
+export function typed<TInput, TOutput = TInput>(): StandardSchemaV1<TInput, TOutput> {
+  return typedSchema as StandardSchemaV1<TInput, TOutput>;
+}
+
+export function isTypedSchema(schema: StandardSchemaV1 | undefined): boolean {
+  return schema?.["~standard"].vendor === TYPED_VENDOR;
 }

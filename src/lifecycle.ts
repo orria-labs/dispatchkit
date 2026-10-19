@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { DispatchkitError } from "./errors.ts";
+
 export function createLifecycle() {
   const callbacks: Array<() => void | Promise<void>> = [];
   let disposal: Promise<void> | undefined;
@@ -10,7 +12,9 @@ export function createLifecycle() {
     },
     onDispose(callback: () => void | Promise<void>) {
       if (disposed)
-        throw new Error("DISPATCHKIT_RUNTIME_DISPOSED: Cannot register cleanup after disposal");
+        throw new DispatchkitError(
+          "DISPATCHKIT_RUNTIME_DISPOSED: Cannot register cleanup after disposal",
+        );
       if (typeof callback !== "function") throw new TypeError("onDispose expects a function");
       const runInContext = AsyncLocalStorage.snapshot();
       callbacks.push(() => runInContext(callback));

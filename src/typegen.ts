@@ -1,6 +1,7 @@
 import { dirname, join, relative } from "node:path";
 
-import { resolveTransportKey } from "./discovery.ts";
+import { compareStrings, resolveTransportKey } from "./discovery.ts";
+import { DispatchkitError } from "./errors.ts";
 import type { DiscoveredTransport, DiscoveryResult } from "./types.ts";
 
 type ManifestShape = {
@@ -80,7 +81,7 @@ function buildTree(
 function renderTree(node: TreeNode, methodsByName: Map<string, string>, indent = "  "): string[] {
   const lines: string[] = [];
 
-  const keys = [...node.children.keys()].sort((left, right) => left.localeCompare(right));
+  const keys = [...node.children.keys()].sort(compareStrings);
   for (const key of keys) {
     const child = node.children.get(key)!;
     if (child.methodKey && child.children.size === 0) {
@@ -114,7 +115,7 @@ function createInfraType(options: {
   for (const item of options.aliases) {
     const existing = seen.get(item.key);
     if (existing) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_INFRA_KEY_COLLISION: Duplicate infra key "${item.key}" between "${existing}" and "${item.filePath}"`,
       );
     }
@@ -122,7 +123,7 @@ function createInfraType(options: {
   }
 
   const lines = options.aliases
-    .sort((left, right) => left.key.localeCompare(right.key))
+    .sort((left, right) => compareStrings(left.key, right.key))
     .map(({ alias, key }) => `  ${JSON.stringify(key)}: InferInfraModule<typeof ${alias}>;`);
 
   return `export interface GeneratedInfra {\n${lines.join("\n")}\n}`;
@@ -134,7 +135,7 @@ function createTransportType(options: { aliases: Array<{ alias: string; key: str
   }
 
   const lines = options.aliases
-    .sort((left, right) => left.key.localeCompare(right.key))
+    .sort((left, right) => compareStrings(left.key, right.key))
     .map(({ alias, key }) => `  ${JSON.stringify(key)}: InferTransportModule<typeof ${alias}>;`);
 
   return `export interface GeneratedTransport {\n${lines.join("\n")}\n}`;
@@ -315,13 +316,13 @@ function getManifestDiscoveryPayload(discovery: DiscoveryResult): {
       }))
       .sort(
         (left, right) =>
-          left.kind.localeCompare(right.kind) ||
-          left.name.localeCompare(right.name) ||
-          left.filePath.localeCompare(right.filePath),
+          compareStrings(left.kind, right.kind) ||
+          compareStrings(left.name, right.name) ||
+          compareStrings(left.filePath, right.filePath),
       ),
     infra: discovery.infra
       .map((filePath) => ({ filePath }))
-      .sort((left, right) => left.filePath.localeCompare(right.filePath)),
+      .sort((left, right) => compareStrings(left.filePath, right.filePath)),
     transport: discovery.transport
       .map((module) => ({
         key: module.key,
@@ -330,9 +331,9 @@ function getManifestDiscoveryPayload(discovery: DiscoveryResult): {
       }))
       .sort(
         (left, right) =>
-          left.key.localeCompare(right.key) ||
-          left.source.localeCompare(right.source) ||
-          left.filePath.localeCompare(right.filePath),
+          compareStrings(left.key, right.key) ||
+          compareStrings(left.source, right.source) ||
+          compareStrings(left.filePath, right.filePath),
       ),
   };
 }

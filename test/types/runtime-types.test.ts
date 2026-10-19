@@ -163,6 +163,12 @@ const schema: StandardSchemaV1<string, number> = {
   },
 };
 export default defineQuery({ input: schema, return: schema, handler: ({ input }) => String(input) });`,
+  "src/modules/typed.query.ts": `${imports}
+import { typed } from "@orria/dispatchkit";
+export default defineQuery({
+  input: typed<{ id: string }>(),
+  handler: ({ input }) => input.id.length,
+});`,
   "src/main.ts": `import { buildRuntime, defineQuery } from "@orria/dispatchkit";
 import { z } from "zod";
 const runtime = await buildRuntime();
@@ -189,6 +195,9 @@ const typeboxref: { count: number } = await runtime.bus.query.typeboxref({ count
 const typeboxrefUnsafe: { count: string } = await runtime.bus.query.typeboxref.$unsafe({ count: 123 });
 const custom: number = await runtime.bus.query.custom("test");
 const customUnsafe: string = await runtime.bus.query.custom.$unsafe(4);
+const typedLength: number = await runtime.bus.query.typed({ id: "1" });
+// @ts-expect-error typed<T>() still types the bus input.
+await runtime.bus.query.typed({ id: 1 });
 await runtime.dispose();
 await globalThis.runtime.dispose();
 // @ts-expect-error Config parsing returns a number.

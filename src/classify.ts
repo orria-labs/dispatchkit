@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { parse } from "@babel/parser";
 import type { Node } from "@babel/types";
 
+import { DispatchkitError } from "./errors.ts";
+
 type DefinitionKind = "infra" | "transport";
 type Reference = { source: string; imported: string };
 type Binding = Node | Reference;
@@ -190,7 +192,7 @@ export function createModuleClassifier(): (filePath: string) => Promise<Definiti
   return async (filePath) => {
     const value = await evaluateSymbol(resolve(filePath), "default", true, new Set());
     if (value?.type === "definition") return value.kind;
-    throw new Error(
+    throw new DispatchkitError(
       `DISPATCHKIT_DISCOVERY_UNKNOWN_DEFINITION: Cannot statically classify "${filePath}". Export defineInfra(...) or defineTransport(...) directly, through const bindings, or through local imports/re-exports.`,
     );
   };

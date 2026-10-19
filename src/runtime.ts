@@ -6,7 +6,8 @@ import { parseEnv } from "node:util";
 
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
-import { resolveTransportKey, toSourceFileFromRelative } from "./discovery.ts";
+import { compareStrings, resolveTransportKey, toSourceFileFromRelative } from "./discovery.ts";
+import { DispatchkitError } from "./errors.ts";
 import { discoverForArtifacts } from "./generate.ts";
 import { createLifecycle } from "./lifecycle.ts";
 import { generateArtifacts } from "./typegen.ts";
@@ -39,6 +40,7 @@ import type {
 } from "./types.ts";
 import {
   assertStandardSchema,
+  isTypedSchema,
   runSchema,
   StandardSchemaError,
   validateSchema,
@@ -378,7 +380,7 @@ function createRuntimeError(options: {
     }
   }
 
-  return new Error(lines.join("\n"));
+  return new DispatchkitError(lines.join("\n"), { code: options.code });
 }
 
 function toImportUrl(path: string): string {
@@ -475,7 +477,7 @@ async function resolveConfigSchema(srcDir: string): Promise<StandardSchemaV1 | u
 
   const configDefinition = (await importDefault(configFilePath)) as ConfigDefinition | undefined;
   if (!configDefinition || configDefinition.__dispatchkitType !== "config") {
-    throw new Error(
+    throw new DispatchkitError(
       `DISPATCHKIT_CONFIG_INVALID_EXPORT: "${normalizeSeparators(configFilePath)}" must export default defineConfig(...)`,
     );
   }
@@ -489,11 +491,10 @@ function wrapValidationError(options: {
   phase: "input" | "return";
   cause: unknown;
 }): Error {
-  const error = new Error(
+  return new DispatchkitError(
     `DISPATCHKIT_VALIDATION_ERROR: ${options.operation} failed ${options.phase} validation`,
+    { cause: options.cause },
   );
-  (error as Error & { cause?: unknown }).cause = options.cause;
-  return error;
 }
 
 function createConsoleBindings(logger: LoggerLike): ConsoleLike {
@@ -509,14 +510,15 @@ function createConsoleBindings(logger: LoggerLike): ConsoleLike {
       return fallbackMethod(...args);
     };
 
-  return {
+  // Inherit the rest of the console API (table, time, group, ...) from the base console.
+  return Object.assign(Object.create(fallback) as ConsoleLike, {
     log: call("info", fallback.log.bind(fallback)),
     info: call("info", fallback.info.bind(fallback)),
     warn: call("warn", fallback.warn.bind(fallback)),
     error: call("error", fallback.error.bind(fallback)),
     debug: call("debug", fallback.debug.bind(fallback)),
     trace: call("trace", fallback.trace.bind(fallback)),
-  };
+  });
 }
 
 function createFallbackConsoleLogger(logLevel: RuntimeDefaultConfig["LOG_LEVEL"]): LoggerLike {
@@ -587,20 +589,20 @@ async function resolveLogger(options: {
   const loggerDefinition = (await importDefault(loggerFilePath)) as
     LoggerDefinition<RuntimeConfig> | undefined;
   if (!loggerDefinition || loggerDefinition.__dispatchkitType !== "logger") {
-    throw new Error(
+    throw new DispatchkitError(
       `DISPATCHKIT_LOGGER_INVALID_EXPORT: "${normalizeSeparators(loggerFilePath)}" must export default defineLogger(...)`,
     );
   }
 
   const resolved = loggerDefinition.factory(options.config);
   if (!resolved || typeof resolved !== "object") {
-    throw new Error(
+    throw new DispatchkitError(
       "DISPATCHKIT_LOGGER_INVALID_FACTORY_RESULT: defineLogger() factory must return { logger, console }",
     );
   }
 
   if (!resolved.logger || !resolved.console) {
-    throw new Error(
+    throw new DispatchkitError(
       "DISPATCHKIT_LOGGER_INVALID_FACTORY_RESULT: logger.ts must provide both logger and console",
     );
   }
@@ -637,7 +639,7 @@ function assignBusEntry(options: {
   const { section, operationName, segments, method, kind } = options;
 
   if (Object.hasOwn(section, operationName)) {
-    throw new Error(
+    throw new DispatchkitError(
       `DISPATCHKIT_BUS_NAME_COLLISION: Duplicate ${kind} operation key "${operationName}"`,
     );
   }
@@ -661,7 +663,7 @@ function assignBusEntry(options: {
     }
 
     if (isBusMethod(existing)) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_BUS_GROUP_COLLISION: Cannot create namespace "${key}" for ${kind}.${operationName}`,
       );
     }
@@ -671,7 +673,7 @@ function assignBusEntry(options: {
 
   const leaf = segments[segments.length - 1]!;
   if (Object.hasOwn(current, leaf)) {
-    throw new Error(
+    throw new DispatchkitError(
       `DISPATCHKIT_BUS_GROUP_COLLISION: Duplicate grouped key "${kind}.${segments.join(".")}"`,
     );
   }
@@ -696,6 +698,9 @@ function createBusMethod(options: {
   // besides the handler context.
   const scope: ModuleScope = { ctx, kind, name };
   const handler = definition.handler as (ctx: unknown) => unknown;
+  // `typed<T>()` schemas only carry types: skip them at runtime.
+  const inputSchema = isTypedSchema(definition.input) ? undefined : definition.input;
+  const returnSchema = isTypedSchema(definition.return) ? undefined : definition.return;
 
   const validate = (
     schema: StandardSchemaV1,
@@ -717,12 +722,12 @@ function createBusMethod(options: {
   // Validation runs inside the operation scope so validators see the CQRS caller.
   const runOperation = async (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
     let input = rawInput;
-    if (!unsafe && definition.input) {
-      input = validate(definition.input, rawInput, "input");
+    if (!unsafe && inputSchema) {
+      input = validate(inputSchema, rawInput, "input");
       if (input instanceof Promise) input = await input;
     }
     const result = await handler({ ...ctx, input });
-    return !unsafe && definition.return ? validate(definition.return, result, "return") : result;
+    return !unsafe && returnSchema ? validate(returnSchema, result, "return") : result;
   };
 
   // Not async: guard failures are returned as rejections, saving one promise layer per call.
@@ -730,14 +735,16 @@ function createBusMethod(options: {
     const caller = runtimeGlobalState.moduleScopeStorage.getStore();
     if (caller?.kind && !CALLABLE[caller.kind].has(kind)) {
       return Promise.reject(
-        new Error(
+        new DispatchkitError(
           `DISPATCHKIT_CQRS_GUARD: ${caller.kind} "${caller.name}" cannot call ${kind} "${name}"`,
         ),
       );
     }
     if (runtimeGlobalState.disposedRuntimes.has(getRuntime())) {
       return Promise.reject(
-        new Error("DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal"),
+        new DispatchkitError(
+          "DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal",
+        ),
       );
     }
     return runtimeGlobalState.moduleScopeStorage.run(scope, runOperation, rawInput, unsafe);
@@ -899,13 +906,13 @@ async function loadOperationDefinitions(
     >;
 
     if (!definition || definition.__dispatchkitType !== "operation") {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_OPERATION_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineQuery/defineMutation/defineAction(...)`,
       );
     }
 
     if (definition.kind !== operation.kind) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_OPERATION_KIND_MISMATCH: "${normalizeSeparators(absolute)}" declares "${definition.kind}" but file name implies "${operation.kind}"`,
       );
     }
@@ -959,7 +966,7 @@ async function loadInfraModules(options: {
       !definition ||
       (definition.__dispatchkitType !== "infra" && definition.__dispatchkitType !== "transport")
     ) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_INFRA_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineInfra(...) or defineTransport(...)`,
       );
     }
@@ -982,14 +989,14 @@ async function loadInfraModules(options: {
       Promise.resolve(definition.factory(infraCtx)),
     );
     if (!result || typeof result !== "object" || Array.isArray(result)) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_INFRA_INVALID_RESULT: "${normalizeSeparators(absolute)}" must return an object`,
       );
     }
 
     const moduleKey = resolveTransportKey(file);
     if (Object.hasOwn(infra, moduleKey)) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_INFRA_KEY_COLLISION: Duplicate infra key "${moduleKey}" from "${file}"`,
       );
     }
@@ -1023,7 +1030,7 @@ async function loadTransportModules(options: {
     )) as TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
 
     if (!definition || definition.__dispatchkitType !== "transport") {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_TRANSPORT_INVALID_EXPORT: "${normalizeSeparators(absolute)}" must export default defineTransport(...)`,
       );
     }
@@ -1052,7 +1059,7 @@ async function loadTransportModules(options: {
       Promise.resolve(definition.factory(transportCtx)),
     );
     if (Object.hasOwn(transport, module.key)) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`,
       );
     }
@@ -1264,7 +1271,9 @@ export function buildRuntime(
 ): Promise<Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>> {
   if (runtimeGlobalState.importScope && getImportScope(resolveCallerFilePath(buildRuntime))) {
     return Promise.reject(
-      new Error("DISPATCHKIT_REENTRANT_BUILD: Cannot build a runtime during module evaluation"),
+      new DispatchkitError(
+        "DISPATCHKIT_REENTRANT_BUILD: Cannot build a runtime during module evaluation",
+      ),
     );
   }
   return runtimeGlobalState.buildContextStorage.run({}, () => buildRuntimeImpl(options));
@@ -1340,15 +1349,15 @@ async function buildRuntimeImpl(
     };
     const transportModules = [...discovery.transport, ...infraResult.transportFromInfra].sort(
       (left, right) =>
-        left.key.localeCompare(right.key) ||
-        left.source.localeCompare(right.source) ||
-        left.filePath.localeCompare(right.filePath),
+        compareStrings(left.key, right.key) ||
+        compareStrings(left.source, right.source) ||
+        compareStrings(left.filePath, right.filePath),
     );
     // Validate collisions before starting any transport resources.
     const transportKeys = new Set<string>();
     for (const module of transportModules) {
       if (transportKeys.has(module.key))
-        throw new Error(
+        throw new DispatchkitError(
           `DISPATCHKIT_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`,
         );
       transportKeys.add(module.key);

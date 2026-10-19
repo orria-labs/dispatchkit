@@ -17,7 +17,8 @@ export type {
   GeneratedQueryBus,
   GeneratedTransport,
 } from "./generated/runtime/index.ts";
-export { StandardSchemaError } from "./validation.ts";
+export { DispatchkitError } from "./errors.ts";
+export { StandardSchemaError, typed } from "./validation.ts";
 export type { StandardSchemaV1 } from "@standard-schema/spec";
 export { buildRuntime, getModuleCtx, getTransportCtx } from "./runtime.ts";
 

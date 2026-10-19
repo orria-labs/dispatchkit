@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, posix } from "node:path";
 
+import { DispatchkitError } from "./errors.ts";
 import type {
   DiscoveredOperation,
   DiscoveredTransport,
@@ -14,15 +15,22 @@ const NON_ALNUM = /[^a-zA-Z0-9]+/g;
 
 const normalizeSeparators = (value: string) => value.replace(/\\/g, "/");
 
+/** Code-point order: generated artifacts must not depend on the machine's locale. */
+export function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function sortUnique(values: string[]): string[] {
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(values)].sort(compareStrings);
 }
 
 function toCamelSegment(input: string): string {
   const parts = input.replace(NON_ALNUM, " ").trim().split(/\s+/).filter(Boolean);
 
   if (parts.length === 0) {
-    throw new Error(`DISPATCHKIT_DISCOVERY_INVALID_SEGMENT: Cannot derive segment from "${input}"`);
+    throw new DispatchkitError(
+      `DISPATCHKIT_DISCOVERY_INVALID_SEGMENT: Cannot derive segment from "${input}"`,
+    );
   }
 
   return parts
@@ -35,7 +43,7 @@ function toCamelSegment(input: string): string {
 
 function joinCamelSegments(segments: string[]): string {
   if (segments.length === 0) {
-    throw new Error("DISPATCHKIT_DISCOVERY_INVALID_NAME: Empty operation path");
+    throw new DispatchkitError("DISPATCHKIT_DISCOVERY_INVALID_NAME: Empty operation path");
   }
 
   return segments
@@ -57,7 +65,7 @@ export function resolveOperationName(relativeModulePath: string): {
   const match = normalized.match(MODULE_SUFFIX_PATTERN);
 
   if (!match) {
-    throw new Error(
+    throw new DispatchkitError(
       `DISPATCHKIT_DISCOVERY_INVALID_OPERATION_FILE: "${relativeModulePath}" is not *.query.ts|*.mutation.ts|*.action.ts`,
     );
   }
@@ -114,7 +122,7 @@ async function discoverModuleOperations(modulesDir: string): Promise<DiscoveredO
     const existing = nameToPath.get(collisionKey);
 
     if (existing) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_DISCOVERY_NAME_COLLISION: Operation name "${name}" collides between "${existing}" and "${filePath}" in kind "${kind}"`,
       );
     }
@@ -149,7 +157,7 @@ function assertOperationPathsNoCollisions(operations: DiscoveredOperation[]): vo
         const next = current.children.get(segment) ?? { children: new Map<string, Node>() };
         const isLeaf = index === operation.operationSegments.length - 1;
         if (next.operation || (isLeaf && next.children.size > 0)) {
-          throw new Error(
+          throw new DispatchkitError(
             `DISPATCHKIT_BUS_GROUP_COLLISION: Operation "${operation.filePath}" conflicts at "${kind}.${operation.operationSegments.slice(0, index + 1).join(".")}" with an operation or namespace`,
           );
         }
@@ -186,7 +194,7 @@ function toDiscoveredTransport(files: string[], source: TransportSource): Discov
     const key = resolveTransportKey(filePath);
     const existing = keys.get(key);
     if (existing) {
-      throw new Error(
+      throw new DispatchkitError(
         `DISPATCHKIT_DISCOVERY_TRANSPORT_COLLISION: Transport key "${key}" collides between "${existing}" and "${filePath}"`,
       );
     }

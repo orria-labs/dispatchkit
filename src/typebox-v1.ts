@@ -3,6 +3,8 @@ import type { StaticDecode, StaticEncode, TProperties, TSchema } from "typebox";
 import { Compile } from "typebox/compile";
 import { DecodeUnsafe, HasCodec } from "typebox/value";
 
+import { DispatchkitError } from "./errors.ts";
+
 function assertSynchronousRefinements(...schemas: unknown[]): void {
   const seen = new WeakSet<object>();
   const visit = (value: unknown): void => {
@@ -14,7 +16,7 @@ function assertSynchronousRefinements(...schemas: unknown[]): void {
       return;
     seen.add(value);
     if (typeof value === "function" && Reflect.get(value, "~elyAsyncRefine") === true) {
-      throw new Error(
+      throw new DispatchkitError(
         "DISPATCHKIT_TYPEBOX_ASYNC_REFINE_UNSUPPORTED: This Elysia schema requires its asynchronous file-type validation pipeline. Use an asynchronous Standard Schema validator for file contents instead.",
       );
     }
