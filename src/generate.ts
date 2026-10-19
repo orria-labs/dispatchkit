@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+
+import { createModuleClassifier } from "./classify.ts";
 import { discoverRuntimeFiles, resolveTransportKey } from "./discovery.ts";
 import { generateArtifacts } from "./typegen.ts";
-import { createModuleClassifier } from "./classify.ts";
-import type {
-  DiscoveredTransport,
-  DiscoveryResult,
-  TransportSource,
-} from "./types.ts";
+import type { DiscoveredTransport, DiscoveryResult, TransportSource } from "./types.ts";
 
 export interface GenerateRuntimeOptions {
   rootDir?: string;
@@ -91,10 +88,7 @@ export async function discoverForArtifacts(srcDir: string): Promise<DiscoveryRes
     srcDir,
     infraFiles: discovery.infra,
   });
-  const allTransport = sortTransport([
-    ...discovery.transport,
-    ...transportModules,
-  ]);
+  const allTransport = sortTransport([...discovery.transport, ...transportModules]);
   assertTransportNoCollisions(allTransport);
 
   return {
@@ -110,9 +104,7 @@ function resolvePaths(options: GenerateRuntimeOptions): {
   generatedDir: string;
 } {
   const rootDir = options.rootDir ? resolve(options.rootDir) : process.cwd();
-  const srcDir = options.srcDir
-    ? resolve(rootDir, options.srcDir)
-    : join(rootDir, "src");
+  const srcDir = options.srcDir ? resolve(rootDir, options.srcDir) : join(rootDir, "src");
   const generatedDir = options.generatedDir
     ? resolve(rootDir, options.generatedDir)
     : join(srcDir, "generated", "runtime");
@@ -123,12 +115,17 @@ function resolvePaths(options: GenerateRuntimeOptions): {
 async function collectWatchFingerprint(srcDir: string, generatedDir: string): Promise<string> {
   if (!existsSync(srcDir)) return "";
   const files = new Set<string>();
-  for await (const path of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan({ cwd: srcDir })) {
+  for await (const path of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan({
+    cwd: srcDir,
+  })) {
     const normalized = normalizeSeparators(path);
     const fromGenerated = normalizeSeparators(relative(generatedDir, join(srcDir, path)));
-    if (/\.d\.(?:ts|mts|cts)$/.test(normalized)
-      || normalized.split("/").some((part) => part === "node_modules" || part === ".git")
-      || (fromGenerated !== ".." && !fromGenerated.startsWith("../") && !isAbsolute(fromGenerated))) continue;
+    if (
+      /\.d\.(?:ts|mts|cts)$/.test(normalized) ||
+      normalized.split("/").some((part) => part === "node_modules" || part === ".git") ||
+      (fromGenerated !== ".." && !fromGenerated.startsWith("../") && !isAbsolute(fromGenerated))
+    )
+      continue;
     files.add(normalized);
   }
 
@@ -170,15 +167,13 @@ export async function generateRuntime(
   };
 }
 
-export async function watchRuntime(
-  options: WatchRuntimeOptions = {},
-): Promise<void> {
+export async function watchRuntime(options: WatchRuntimeOptions = {}): Promise<void> {
   const intervalMs = options.intervalMs ?? 400;
   if (!Number.isFinite(intervalMs) || intervalMs < 50) {
     throw new Error("DISPATCHKIT_WATCH_INVALID_INTERVAL: intervalMs must be a number >= 50");
   }
-  const onInfo = options.onInfo ?? (() => { });
-  const onError = options.onError ?? (() => { });
+  const onInfo = options.onInfo ?? (() => {});
+  const onError = options.onError ?? (() => {});
 
   const paths = resolvePaths(options);
   let lastFingerprint = await collectWatchFingerprint(paths.srcDir, paths.generatedDir);

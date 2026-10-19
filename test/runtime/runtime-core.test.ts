@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+
 import { buildRuntime } from "../../src/index.ts";
 import { dispatchkitImportLine, withTempProject } from "../test-helpers.ts";
 
@@ -39,11 +40,13 @@ describe("runtime logger", () => {
         "src/logger.ts": `${dispatchkitImportLine()}\nconst logger = { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined };\nexport default defineLogger(() => ({ logger, console: globalThis.customConsole }));`,
       },
       async (rootDir) => {
-        (globalThis as typeof globalThis & { customConsole?: typeof customConsole }).customConsole = customConsole;
+        (globalThis as typeof globalThis & { customConsole?: typeof customConsole }).customConsole =
+          customConsole;
         await buildRuntime({ rootDir, srcDir: join(rootDir, "src") });
 
         expect(globalThis.console).toBe(customConsole);
-        delete (globalThis as typeof globalThis & { customConsole?: typeof customConsole }).customConsole;
+        delete (globalThis as typeof globalThis & { customConsole?: typeof customConsole })
+          .customConsole;
       },
     );
   });
@@ -105,12 +108,8 @@ describe("runtime cqrs guards", () => {
         const bus = runtime.bus as any;
 
         await expect(bus.action.start({})).resolves.toBe(1);
-        await expect(bus.query.forbiddenQuery({})).rejects.toThrow(
-          "DISPATCHKIT_CQRS_GUARD",
-        );
-        await expect(bus.mutation.forbiddenMutation({})).rejects.toThrow(
-          "DISPATCHKIT_CQRS_GUARD",
-        );
+        await expect(bus.query.forbiddenQuery({})).rejects.toThrow("DISPATCHKIT_CQRS_GUARD");
+        await expect(bus.mutation.forbiddenMutation({})).rejects.toThrow("DISPATCHKIT_CQRS_GUARD");
       },
     );
   });
@@ -129,12 +128,8 @@ describe("runtime validation", () => {
         });
         const bus = runtime.bus as any;
 
-        await expect(bus.mutation.check({ value: "1" })).rejects.toThrow(
-          "input validation",
-        );
-        await expect(bus.mutation.check({ value: 13 })).rejects.toThrow(
-          "return validation",
-        );
+        await expect(bus.mutation.check({ value: "1" })).rejects.toThrow("input validation");
+        await expect(bus.mutation.check({ value: 13 })).rejects.toThrow("return validation");
         await expect(
           bus.mutation.check.$unsafe({ value: "1" } as unknown as { value: number }),
         ).resolves.toEqual({

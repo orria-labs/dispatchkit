@@ -1,4 +1,5 @@
 import { dirname, join, relative } from "node:path";
+
 import { resolveTransportKey } from "./discovery.ts";
 import type { DiscoveredTransport, DiscoveryResult } from "./types.ts";
 
@@ -59,11 +60,7 @@ function buildTree(
     }
 
     let current = root;
-    for (
-      let index = 0;
-      index < operation.operationSegments.length;
-      index += 1
-    ) {
+    for (let index = 0; index < operation.operationSegments.length; index += 1) {
       const segment = operation.operationSegments[index]!;
       const next = current.children.get(segment) ?? {
         children: new Map<string, TreeNode>(),
@@ -80,30 +77,20 @@ function buildTree(
   return root;
 }
 
-function renderTree(
-  node: TreeNode,
-  methodsByName: Map<string, string>,
-  indent = "  ",
-): string[] {
+function renderTree(node: TreeNode, methodsByName: Map<string, string>, indent = "  "): string[] {
   const lines: string[] = [];
 
-  const keys = [...node.children.keys()].sort((left, right) =>
-    left.localeCompare(right),
-  );
+  const keys = [...node.children.keys()].sort((left, right) => left.localeCompare(right));
   for (const key of keys) {
     const child = node.children.get(key)!;
     if (child.methodKey && child.children.size === 0) {
-      lines.push(
-        `${indent}${JSON.stringify(key)}: ${methodsByName.get(child.methodKey)!};`,
-      );
+      lines.push(`${indent}${JSON.stringify(key)}: ${methodsByName.get(child.methodKey)!};`);
       continue;
     }
 
     const nestedLines = renderTree(child, methodsByName, `${indent}  `);
     if (child.methodKey) {
-      lines.push(
-        `${indent}${JSON.stringify(key)}: ${methodsByName.get(child.methodKey)!} & {`,
-      );
+      lines.push(`${indent}${JSON.stringify(key)}: ${methodsByName.get(child.methodKey)!} & {`);
       lines.push(...nestedLines);
       lines.push(`${indent}};`);
     } else {
@@ -136,27 +123,19 @@ function createInfraType(options: {
 
   const lines = options.aliases
     .sort((left, right) => left.key.localeCompare(right.key))
-    .map(
-      ({ alias, key }) =>
-        `  ${JSON.stringify(key)}: InferInfraModule<typeof ${alias}>;`,
-    );
+    .map(({ alias, key }) => `  ${JSON.stringify(key)}: InferInfraModule<typeof ${alias}>;`);
 
   return `export interface GeneratedInfra {\n${lines.join("\n")}\n}`;
 }
 
-function createTransportType(options: {
-  aliases: Array<{ alias: string; key: string }>;
-}): string {
+function createTransportType(options: { aliases: Array<{ alias: string; key: string }> }): string {
   if (options.aliases.length === 0) {
     return "export type GeneratedTransport = Record<string, unknown>;";
   }
 
   const lines = options.aliases
     .sort((left, right) => left.key.localeCompare(right.key))
-    .map(
-      ({ alias, key }) =>
-        `  ${JSON.stringify(key)}: InferTransportModule<typeof ${alias}>;`,
-    );
+    .map(({ alias, key }) => `  ${JSON.stringify(key)}: InferTransportModule<typeof ${alias}>;`);
 
   return `export interface GeneratedTransport {\n${lines.join("\n")}\n}`;
 }
@@ -249,10 +228,7 @@ function createRuntimeTypesContent(options: {
   srcDir: string;
   discovery: DiscoveryResult;
 }): string {
-  const busImport = toImportPath(
-    options.outputPath,
-    join(dirname(options.outputPath), "bus.d.ts"),
-  );
+  const busImport = toImportPath(options.outputPath, join(dirname(options.outputPath), "bus.d.ts"));
 
   const configImport = options.discovery.configPath
     ? `import type AppConfigDefinition from ${JSON.stringify(toImportPath(options.outputPath, join(options.srcDir, options.discovery.configPath)))};\n`
@@ -267,9 +243,7 @@ function createRuntimeTypesContent(options: {
   const loggerType = options.discovery.loggerPath
     ? "InferLoggerFromDefinition<typeof AppLoggerDefinition>"
     : "LoggerLike";
-  const loggerInferImport = options.discovery.loggerPath
-    ? "InferLoggerFromDefinition, "
-    : "";
+  const loggerInferImport = options.discovery.loggerPath ? "InferLoggerFromDefinition, " : "";
 
   return `${GENERATED_HEADER}import type { GeneratedBus, GeneratedInfra, GeneratedTransport } from ${JSON.stringify(busImport)};
 import type { ${loggerInferImport}InferConfigFromDefinition, LoggerLike, RuntimeDefaultConfig } from "@orria/dispatchkit";
@@ -307,10 +281,7 @@ export type { GeneratedConfig, RuntimeContext } from "./runtime";
 `;
 }
 
-function createManifest(
-  discovery: DiscoveryResult,
-  discoveryHash: string,
-): ManifestShape {
+function createManifest(discovery: DiscoveryResult, discoveryHash: string): ManifestShape {
   return {
     meta: {
       builtAt: new Date().toISOString(),
@@ -406,11 +377,7 @@ export async function generateArtifacts(options: {
   const indexPath = join(options.generatedDir, "index.ts");
   const manifestPath = join(options.generatedDir, "manifest.json");
 
-  const busContent = createBusTypesContent(
-    busPath,
-    options.srcDir,
-    options.discovery,
-  );
+  const busContent = createBusTypesContent(busPath, options.srcDir, options.discovery);
   const runtimeContent = createRuntimeTypesContent({
     outputPath: runtimePath,
     srcDir: options.srcDir,

@@ -6,7 +6,12 @@ import { DecodeUnsafe, HasCodec } from "typebox/value";
 function assertSynchronousRefinements(...schemas: unknown[]): void {
   const seen = new WeakSet<object>();
   const visit = (value: unknown): void => {
-    if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return;
+    if (
+      value === null ||
+      (typeof value !== "object" && typeof value !== "function") ||
+      seen.has(value)
+    )
+      return;
     seen.add(value);
     if (typeof value === "function" && Reflect.get(value, "~elyAsyncRefine") === true) {
       throw new Error(
@@ -17,7 +22,12 @@ function assertSynchronousRefinements(...schemas: unknown[]): void {
       if ("value" in descriptor) visit(descriptor.value);
     }
     const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== Function.prototype) visit(prototype);
+    if (
+      prototype !== Object.prototype &&
+      prototype !== Array.prototype &&
+      prototype !== Function.prototype
+    )
+      visit(prototype);
   };
   for (const schema of schemas) visit(schema);
 }
@@ -39,7 +49,8 @@ function cloneData(value: unknown, seen = new WeakMap<object, unknown>()): unkno
   if (prototype === Map.prototype) {
     const clone = new Map();
     seen.set(value, clone);
-    for (const [key, item] of value as Map<unknown, unknown>) clone.set(cloneData(key, seen), cloneData(item, seen));
+    for (const [key, item] of value as Map<unknown, unknown>)
+      clone.set(cloneData(key, seen), cloneData(item, seen));
     return clone;
   }
   if (prototype === Set.prototype) {
@@ -54,12 +65,18 @@ function cloneData(value: unknown, seen = new WeakMap<object, unknown>()): unkno
   for (const key of Reflect.ownKeys(value)) {
     if (Array.isArray(value) && key === "length") continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-    Object.defineProperty(clone, key, "value" in descriptor ? {
-      value: cloneData(descriptor.value, seen),
-      enumerable: descriptor.enumerable,
-      configurable: true,
-      writable: true,
-    } : descriptor);
+    Object.defineProperty(
+      clone,
+      key,
+      "value" in descriptor
+        ? {
+            value: cloneData(descriptor.value, seen),
+            enumerable: descriptor.enumerable,
+            configurable: true,
+            writable: true,
+          }
+        : descriptor,
+    );
   }
   return clone;
 }
@@ -92,10 +109,10 @@ function issuePath(value: unknown, path: string): string[] | undefined {
  * conversion, defaults, or cleaning. Plain data containers are cloned before
  * decoding; opaque class instances and user callbacks retain TypeBox semantics.
  */
-export function standardSchema<
-  const T extends TSchema,
-  const C extends TProperties = {},
->(schema: T, context?: C): StandardSchemaV1<StaticEncode<T, C>, StaticDecode<T, C>> {
+export function standardSchema<const T extends TSchema, const C extends TProperties = {}>(
+  schema: T,
+  context?: C,
+): StandardSchemaV1<StaticEncode<T, C>, StaticDecode<T, C>> {
   const references = context ?? {};
   assertSynchronousRefinements(schema, references);
   const compiled = Compile(references, schema);
@@ -114,7 +131,9 @@ export function standardSchema<
           };
         }
         return {
-          value: (hasCodec ? DecodeUnsafe(references, schema, cloneData(value)) : value) as StaticDecode<T, C>,
+          value: (hasCodec
+            ? DecodeUnsafe(references, schema, cloneData(value))
+            : value) as StaticDecode<T, C>,
         };
       },
     },

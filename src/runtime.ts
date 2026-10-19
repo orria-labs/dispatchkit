@@ -2,16 +2,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import dotenv from "dotenv";
+
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { assertStandardSchema, StandardSchemaError, validateSchema } from "./validation.ts";
-import { createLifecycle } from "./lifecycle.ts";
-import {
-  resolveTransportKey,
-  toSourceFileFromRelative,
-} from "./discovery.ts";
-import { generateArtifacts } from "./typegen.ts";
+import dotenv from "dotenv";
+
+import { resolveTransportKey, toSourceFileFromRelative } from "./discovery.ts";
 import { discoverForArtifacts } from "./generate.ts";
+import { createLifecycle } from "./lifecycle.ts";
+import { generateArtifacts } from "./typegen.ts";
 import type {
   BuildRuntimeOptions,
   BusMethod,
@@ -34,11 +32,12 @@ import type {
   RuntimeInfraShape,
   RuntimeTransportShape,
   TransportContext,
-  TransportFactoryContext,
   TransportDefinition,
   TransportDefinitionOptions,
+  TransportFactoryContext,
   TransportSource,
 } from "./types.ts";
+import { assertStandardSchema, StandardSchemaError, validateSchema } from "./validation.ts";
 
 type RuntimeConfig = RuntimeDefaultConfig & Record<string, unknown>;
 type InternalRuntime = Runtime<
@@ -86,9 +85,7 @@ const moduleContextStorage = new AsyncLocalStorage<
 const transportContextStorage = new AsyncLocalStorage<
   TransportContext<RuntimeConfig, RuntimeBusBase>
 >();
-const transportCtxAccessGuardStorage = new AsyncLocalStorage<
-  TransportCtxAccessGuard | undefined
->();
+const transportCtxAccessGuardStorage = new AsyncLocalStorage<TransportCtxAccessGuard | undefined>();
 const callFrameStorage = new AsyncLocalStorage<CallFrame[]>();
 type BuildScope = { runtime?: InternalRuntime; srcDir?: string };
 type ImportScope = {
@@ -99,9 +96,7 @@ type ImportScope = {
 };
 const buildContextStorage = new AsyncLocalStorage<BuildScope>();
 const disposedRuntimes = new WeakSet<InternalRuntime>();
-const RUNTIME_GLOBAL_STATE_KEY = Symbol.for(
-  "dispatchkit.runtime.globalState.v2",
-);
+const RUNTIME_GLOBAL_STATE_KEY = Symbol.for("dispatchkit.runtime.globalState.v2");
 
 type RuntimeGlobalState = {
   baseConsole: ConsoleLike;
@@ -145,15 +140,7 @@ function getRuntimeGlobalState(): RuntimeGlobalState {
 
 const runtimeGlobalState = getRuntimeGlobalState();
 
-const LOG_LEVELS = [
-  "fatal",
-  "error",
-  "warn",
-  "info",
-  "debug",
-  "trace",
-  "silent",
-] as const;
+const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 type LogLevel = (typeof LOG_LEVELS)[number];
 const LOG_LEVEL_INDEX = LOG_LEVELS.reduce<Record<LogLevel, number>>(
   (acc, level, index) => {
@@ -162,7 +149,6 @@ const LOG_LEVEL_INDEX = LOG_LEVELS.reduce<Record<LogLevel, number>>(
   },
   {} as Record<LogLevel, number>,
 );
-
 
 const RESERVED_RUNTIME_OPTION_KEYS = new Set([
   "rootDir",
@@ -213,17 +199,13 @@ function hasGlobMagic(value: string): boolean {
   return /[*?[\]{}()!+@]/.test(value);
 }
 
-function buildDefaultTransportCtxPatterns(
-  module: TransportCtxModuleRef,
-): string[] {
+function buildDefaultTransportCtxPatterns(module: TransportCtxModuleRef): string[] {
   const layerDir = module.source === "infra" ? "infra" : "transport";
   const normalizedFilePath = normalizeSeparators(module.filePath);
   return [`${layerDir}/${normalizedFilePath}`];
 }
 
-function expandTransportCtxAllowPatterns(options: {
-  patterns: string[];
-}): string[] {
+function expandTransportCtxAllowPatterns(options: { patterns: string[] }): string[] {
   const expanded: string[] = [];
 
   for (const rawPattern of options.patterns) {
@@ -235,9 +217,7 @@ function expandTransportCtxAllowPatterns(options: {
     expanded.push(normalized);
 
     const isShorthand =
-      !normalized.includes("/") &&
-      !normalized.endsWith(".ts") &&
-      !hasGlobMagic(normalized);
+      !normalized.includes("/") && !normalized.endsWith(".ts") && !hasGlobMagic(normalized);
 
     if (isShorthand) {
       expanded.push(`${normalized}.ts`);
@@ -280,9 +260,7 @@ function buildTransportCtxAccessGuard(options: {
   };
 }
 
-function resolveCallerFilePath(
-  skipper: (...args: any[]) => unknown,
-): string | undefined {
+function resolveCallerFilePath(skipper: (...args: any[]) => unknown): string | undefined {
   if (typeof Error.captureStackTrace !== "function") {
     return undefined;
   }
@@ -301,9 +279,7 @@ function resolveCallerFilePath(
         continue;
       }
 
-      const filePath = rawFilePath.startsWith("file://")
-        ? fileURLToPath(rawFilePath)
-        : rawFilePath;
+      const filePath = rawFilePath.startsWith("file://") ? fileURLToPath(rawFilePath) : rawFilePath;
       const normalized = normalizeSeparators(filePath);
       if (normalized === RUNTIME_FILE_PATH) {
         continue;
@@ -329,9 +305,7 @@ function isTransportCtxCallAllowed(options: {
   }
 
   const callerPath = resolvePhysicalPath(options.callerFilePath);
-  const normalizedRelative = normalizeSeparators(
-    relative(options.guard.srcDir, callerPath),
-  );
+  const normalizedRelative = normalizeSeparators(relative(options.guard.srcDir, callerPath));
 
   if (
     normalizedRelative === ".." ||
@@ -352,10 +326,7 @@ function toDisplayPath(path: string | undefined): string {
   return normalizeSeparators(path);
 }
 
-function toDisplayPathFromSrc(options: {
-  srcDir: string;
-  filePath: string | undefined;
-}): string {
+function toDisplayPathFromSrc(options: { srcDir: string; filePath: string | undefined }): string {
   if (!options.filePath) {
     return "unknown";
   }
@@ -418,7 +389,9 @@ async function importDefault(path: string): Promise<unknown> {
   };
   const previous = runtimeGlobalState.importQueue;
   let release!: () => void;
-  runtimeGlobalState.importQueue = new Promise<void>(resolve => { release = resolve; });
+  runtimeGlobalState.importQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await previous;
   runtimeGlobalState.importScope = scope;
   try {
@@ -433,20 +406,18 @@ async function importDefault(path: string): Promise<unknown> {
 function getImportScope(callerFilePath: string | undefined): ImportScope | undefined {
   const scope = runtimeGlobalState.importScope;
   if (!scope?.build?.srcDir || !callerFilePath) return undefined;
-  const path = normalizeSeparators(relative(resolvePhysicalPath(scope.build.srcDir), resolvePhysicalPath(callerFilePath)));
+  const path = normalizeSeparators(
+    relative(resolvePhysicalPath(scope.build.srcDir), resolvePhysicalPath(callerFilePath)),
+  );
   return path === ".." || path.startsWith("../") ? undefined : scope;
 }
 
 function pickDefined(input: Record<string, unknown>): Record<string, unknown> {
-  const entries = Object.entries(input).filter(
-    ([, value]) => value !== undefined,
-  );
+  const entries = Object.entries(input).filter(([, value]) => value !== undefined);
   return Object.fromEntries(entries);
 }
 
-function extractConfigOverrides(
-  options: BuildRuntimeOptions,
-): Record<string, unknown> {
+function extractConfigOverrides(options: BuildRuntimeOptions): Record<string, unknown> {
   const fromOptions: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(options)) {
@@ -462,9 +433,7 @@ function extractConfigOverrides(
   };
 }
 
-async function readPackageJson(
-  rootDir: string,
-): Promise<Record<string, unknown>> {
+async function readPackageJson(rootDir: string): Promise<Record<string, unknown>> {
   const path = join(rootDir, "package.json");
   const file = Bun.file(path);
 
@@ -474,9 +443,7 @@ async function readPackageJson(
 
   try {
     const data = await file.json();
-    return typeof data === "object" && data !== null
-      ? (data as Record<string, unknown>)
-      : {};
+    return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
   } catch {
     return {};
   }
@@ -491,9 +458,7 @@ async function readEnvFile(path: string): Promise<Record<string, string>> {
   return dotenv.parse(await file.text());
 }
 
-async function resolveConfigSchema(
-  srcDir: string,
-): Promise<StandardSchemaV1 | undefined> {
+async function resolveConfigSchema(srcDir: string): Promise<StandardSchemaV1 | undefined> {
   const configFilePath = join(srcDir, "config.ts");
   const exists = await Bun.file(configFilePath).exists();
 
@@ -501,9 +466,7 @@ async function resolveConfigSchema(
     return undefined;
   }
 
-  const configDefinition = (await importDefault(configFilePath)) as
-    | ConfigDefinition
-    | undefined;
+  const configDefinition = (await importDefault(configFilePath)) as ConfigDefinition | undefined;
   if (!configDefinition || configDefinition.__dispatchkitType !== "config") {
     throw new Error(
       `DISPATCHKIT_CONFIG_INVALID_EXPORT: "${normalizeSeparators(configFilePath)}" must export default defineConfig(...)`,
@@ -530,20 +493,14 @@ function createConsoleBindings(logger: LoggerLike): ConsoleLike {
   const fallback = runtimeGlobalState.baseConsole;
 
   const call =
-    (
-      method: keyof LoggerLike,
-      fallbackMethod: (...args: unknown[]) => unknown,
-    ) =>
-      (...args: unknown[]) => {
-        const loggerMethod = logger[method];
-        if (typeof loggerMethod === "function") {
-          return (loggerMethod as (...input: unknown[]) => unknown).apply(
-            logger,
-            args,
-          );
-        }
-        return fallbackMethod(...args);
-      };
+    (method: keyof LoggerLike, fallbackMethod: (...args: unknown[]) => unknown) =>
+    (...args: unknown[]) => {
+      const loggerMethod = logger[method];
+      if (typeof loggerMethod === "function") {
+        return (loggerMethod as (...input: unknown[]) => unknown).apply(logger, args);
+      }
+      return fallbackMethod(...args);
+    };
 
   return {
     log: call("info", fallback.log.bind(fallback)),
@@ -555,9 +512,7 @@ function createConsoleBindings(logger: LoggerLike): ConsoleLike {
   };
 }
 
-function createFallbackConsoleLogger(
-  logLevel: RuntimeDefaultConfig["LOG_LEVEL"],
-): LoggerLike {
+function createFallbackConsoleLogger(logLevel: RuntimeDefaultConfig["LOG_LEVEL"]): LoggerLike {
   const fallbackConsole = runtimeGlobalState.baseConsole;
 
   const shouldLog = (level: RuntimeDefaultConfig["LOG_LEVEL"]): boolean => {
@@ -568,10 +523,7 @@ function createFallbackConsoleLogger(
     return LOG_LEVEL_INDEX[level] <= LOG_LEVEL_INDEX[logLevel];
   };
 
-  const makeMethod = (
-    level: RuntimeDefaultConfig["LOG_LEVEL"],
-    method: keyof ConsoleLike,
-  ) => {
+  const makeMethod = (level: RuntimeDefaultConfig["LOG_LEVEL"], method: keyof ConsoleLike) => {
     const sinkMethod = fallbackConsole[method] ?? fallbackConsole.log;
     const sink = sinkMethod.bind(fallbackConsole);
     return (...args: unknown[]) => {
@@ -633,8 +585,7 @@ async function resolveLogger(options: {
   }
 
   const loggerDefinition = (await importDefault(loggerFilePath)) as
-    | LoggerDefinition<RuntimeConfig>
-    | undefined;
+    LoggerDefinition<RuntimeConfig> | undefined;
   if (!loggerDefinition || loggerDefinition.__dispatchkitType !== "logger") {
     throw new Error(
       `DISPATCHKIT_LOGGER_INVALID_EXPORT: "${normalizeSeparators(loggerFilePath)}" must export default defineLogger(...)`,
@@ -734,10 +685,7 @@ function createBusMethod(options: {
 }): BusMethod<any, any> {
   const { operation, getRuntime } = options;
 
-  const execute = async (
-    rawInput: unknown,
-    unsafe: boolean,
-  ): Promise<unknown> => {
+  const execute = async (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
     const stack = runtimeGlobalState.callFrameStorage.getStore() ?? [];
     const caller = stack[stack.length - 1];
 
@@ -748,11 +696,7 @@ function createBusMethod(options: {
     }
 
     const runtime = getRuntime();
-    const moduleCtx: ModuleContext<
-      RuntimeConfig,
-      Record<string, unknown>,
-      RuntimeBusBase
-    > = {
+    const moduleCtx: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase> = {
       config: runtime.config,
       logger: runtime.logger,
       infra: runtime.infra,
@@ -762,28 +706,34 @@ function createBusMethod(options: {
     if (runtimeGlobalState.disposedRuntimes.has(runtime)) {
       throw new Error("DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal");
     }
-    const nextStack = [...stack, { kind: operation.kind, name: operation.name } satisfies CallFrame];
+    const nextStack = [
+      ...stack,
+      { kind: operation.kind, name: operation.name } satisfies CallFrame,
+    ];
     return runtimeGlobalState.callFrameStorage.run(nextStack, () =>
       runtimeGlobalState.moduleContextStorage.run(moduleCtx, async () => {
         let input = rawInput;
         if (!unsafe && operation.definition.input) {
-          try { input = await validateSchema(operation.definition.input, rawInput); }
-          catch (cause) { throw wrapValidationError({ operation: operation.name, phase: "input", cause }); }
+          try {
+            input = await validateSchema(operation.definition.input, rawInput);
+          } catch (cause) {
+            throw wrapValidationError({ operation: operation.name, phase: "input", cause });
+          }
         }
         const result = await operation.definition.handler({ ...moduleCtx, input });
         if (!unsafe && operation.definition.return) {
-          try { return await validateSchema(operation.definition.return, result); }
-          catch (cause) { throw wrapValidationError({ operation: operation.name, phase: "return", cause }); }
+          try {
+            return await validateSchema(operation.definition.return, result);
+          } catch (cause) {
+            throw wrapValidationError({ operation: operation.name, phase: "return", cause });
+          }
         }
         return result;
       }),
     );
   };
 
-  const call = (async (input: unknown) => execute(input, false)) as BusMethod<
-    any,
-    any
-  >;
+  const call = (async (input: unknown) => execute(input, false)) as BusMethod<any, any>;
   call.$unsafe = async (input: unknown) => execute(input, true);
   call.$input = operation.definition.input;
   call.$return = operation.definition.return;
@@ -800,7 +750,7 @@ function wrapTransportWithContext(
   const isObject = (input: unknown): input is object =>
     input !== null && (typeof input === "object" || typeof input === "function");
   const unwrap = (input: unknown): unknown =>
-    isObject(input) ? originals.get(input) ?? input : input;
+    isObject(input) ? (originals.get(input) ?? input) : input;
   const run = <T>(callback: () => T): T =>
     runtimeGlobalState.transportContextStorage.run(ctx, () =>
       runtimeGlobalState.transportCtxAccessGuardStorage.run(guard, callback),
@@ -811,15 +761,23 @@ function wrapTransportWithContext(
     // Native consumers inspect internal slots directly, without invoking proxy
     // traps. Keep HTTP bodies, binary data and web primitives intact.
     if (
-      input instanceof Response || input instanceof Request ||
-      input instanceof Headers || input instanceof Blob ||
-      input instanceof FormData || input instanceof URL ||
-      input instanceof URLSearchParams || input instanceof ArrayBuffer ||
-      input instanceof SharedArrayBuffer || ArrayBuffer.isView(input) ||
-      input instanceof ReadableStream || input instanceof WritableStream ||
-      input instanceof TransformStream || input instanceof AbortSignal ||
+      input instanceof Response ||
+      input instanceof Request ||
+      input instanceof Headers ||
+      input instanceof Blob ||
+      input instanceof FormData ||
+      input instanceof URL ||
+      input instanceof URLSearchParams ||
+      input instanceof ArrayBuffer ||
+      input instanceof SharedArrayBuffer ||
+      ArrayBuffer.isView(input) ||
+      input instanceof ReadableStream ||
+      input instanceof WritableStream ||
+      input instanceof TransformStream ||
+      input instanceof AbortSignal ||
       input instanceof AbortController
-    ) return input;
+    )
+      return input;
     if (originals.has(input)) return input;
     const existing = wrappers.get(input);
     if (existing) return existing;
@@ -841,8 +799,10 @@ function wrapTransportWithContext(
           const nested = Reflect.get(target, key, target);
           const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
           if (
-            descriptor && !descriptor.configurable &&
-            "value" in descriptor && !descriptor.writable
+            descriptor &&
+            !descriptor.configurable &&
+            "value" in descriptor &&
+            !descriptor.writable
           ) {
             // Proxy invariants require the exact value of a frozen own property.
             return nested;
@@ -854,18 +814,27 @@ function wrapTransportWithContext(
         return run(() => Reflect.set(target, key, unwrap(next), target));
       },
       apply(target, receiver, args) {
-        return run(() => wrap(Reflect.apply(
-          target as (...args: unknown[]) => unknown,
-          unwrap(receiver),
-          args.map(unwrap),
-        )));
+        return run(() =>
+          wrap(
+            Reflect.apply(
+              target as (...args: unknown[]) => unknown,
+              unwrap(receiver),
+              args.map(unwrap),
+            ),
+          ),
+        );
       },
       construct(target, args, newTarget) {
-        return run(() => wrap(Reflect.construct(
-          target as new (...args: unknown[]) => object,
-          args.map(unwrap),
-          unwrap(newTarget) as new (...args: unknown[]) => object,
-        )) as object);
+        return run(
+          () =>
+            wrap(
+              Reflect.construct(
+                target as new (...args: unknown[]) => object,
+                args.map(unwrap),
+                unwrap(newTarget) as new (...args: unknown[]) => object,
+              ),
+            ) as object,
+        );
       },
     });
     wrappers.set(input, wrapped);
@@ -883,10 +852,7 @@ async function loadOperationDefinitions(
   const loaded: LoadedOperation[] = [];
 
   for (const operation of discovery.operations) {
-    const absolute = toSourceFileFromRelative(
-      join(srcDir, "modules"),
-      operation.filePath,
-    );
+    const absolute = toSourceFileFromRelative(join(srcDir, "modules"), operation.filePath);
     const definition = (await importDefault(absolute)) as OperationDefinition<
       OperationKind,
       any,
@@ -911,7 +877,9 @@ async function loadOperationDefinitions(
     if (definition.input !== undefined) assertStandardSchema(definition.input);
     if (definition.return !== undefined) assertStandardSchema(definition.return);
     if (typeof definition.handler !== "function") {
-      throw new TypeError(`DISPATCHKIT_OPERATION_INVALID_HANDLER: ${operation.operationName} must define a handler`);
+      throw new TypeError(
+        `DISPATCHKIT_OPERATION_INVALID_HANDLER: ${operation.operationName} must define a handler`,
+      );
     }
     loaded.push({
       kind: operation.kind,
@@ -946,10 +914,7 @@ async function loadInfraModules(options: {
   }> = [];
 
   for (const file of options.discovery.infra) {
-    const absolute = toSourceFileFromRelative(
-      join(options.srcDir, "infra"),
-      file,
-    );
+    const absolute = toSourceFileFromRelative(join(options.srcDir, "infra"), file);
     const definition = (await importDefault(absolute)) as
       | InfraDefinition<RuntimeConfig, unknown>
       | TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
@@ -1015,15 +980,10 @@ async function loadTransportModules(options: {
 
   for (const module of options.transportModules) {
     const layerDir = module.source === "infra" ? "infra" : "transport";
-    const absolute = toSourceFileFromRelative(
-      join(options.srcDir, layerDir),
-      module.filePath,
-    );
-    const definition = (await runtimeGlobalState.transportContextStorage.run(
-      options.ctx,
-      () => runtimeGlobalState.transportCtxAccessGuardStorage.run(
-        undefined,
-        () => importDefault(absolute),
+    const absolute = toSourceFileFromRelative(join(options.srcDir, layerDir), module.filePath);
+    const definition = (await runtimeGlobalState.transportContextStorage.run(options.ctx, () =>
+      runtimeGlobalState.transportCtxAccessGuardStorage.run(undefined, () =>
+        importDefault(absolute),
       ),
     )) as TransportDefinition<RuntimeConfig, RuntimeBusBase, unknown>;
 
@@ -1033,11 +993,8 @@ async function loadTransportModules(options: {
       );
     }
 
-    const transportCtx: TransportFactoryContext<RuntimeConfig, RuntimeBusBase> =
-      options.ctx;
-    const transportOptions = definition.options as
-      | TransportDefinitionOptions
-      | undefined;
+    const transportCtx: TransportFactoryContext<RuntimeConfig, RuntimeBusBase> = options.ctx;
+    const transportOptions = definition.options as TransportDefinitionOptions | undefined;
     const allowPatterns = transportOptions?.allowGetTransportCtxFrom ?? [];
     const defaultPatterns = buildDefaultTransportCtxPatterns({
       key: module.key,
@@ -1066,11 +1023,7 @@ async function loadTransportModules(options: {
       );
     }
 
-    transport[module.key] = wrapTransportWithContext(
-      result,
-      transportCtx,
-      moduleGuard,
-    );
+    transport[module.key] = wrapTransportWithContext(result, transportCtx, moduleGuard);
   }
 
   return {
@@ -1111,10 +1064,14 @@ function buildBus(
 function validateDefaultConfig(input: Record<string, unknown>): RuntimeDefaultConfig {
   const issues: StandardSchemaV1.Issue[] = [];
   for (const key of ["SERVICE_NAME", "SERVICE_DESCRIPTION", "SERVICE_VERSION"] as const) {
-    if (typeof input[key] !== "string") issues.push({ message: `${key} must be a string`, path: [key] });
+    if (typeof input[key] !== "string")
+      issues.push({ message: `${key} must be a string`, path: [key] });
   }
   if (!LOG_LEVELS.includes(input.LOG_LEVEL as LogLevel)) {
-    issues.push({ message: `LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}`, path: ["LOG_LEVEL"] });
+    issues.push({
+      message: `LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}`,
+      path: ["LOG_LEVEL"],
+    });
   }
   if (input.NODE_ENV !== "development" && input.NODE_ENV !== "production") {
     issues.push({ message: "NODE_ENV must be development or production", path: ["NODE_ENV"] });
@@ -1140,16 +1097,10 @@ async function resolveRuntimeConfig(options: {
     readEnvFile(options.envFile),
   ]);
   const defaults: RuntimeDefaultConfig = {
-    SERVICE_NAME:
-      typeof packageJson.name === "string" ? packageJson.name : "service",
+    SERVICE_NAME: typeof packageJson.name === "string" ? packageJson.name : "service",
     SERVICE_DESCRIPTION:
-      typeof packageJson.description === "string"
-        ? packageJson.description
-        : "service description",
-    SERVICE_VERSION:
-      typeof packageJson.version === "string"
-        ? packageJson.version
-        : "0.0.0-dev",
+      typeof packageJson.description === "string" ? packageJson.description : "service description",
+    SERVICE_VERSION: typeof packageJson.version === "string" ? packageJson.version : "0.0.0-dev",
     LOG_LEVEL: "info",
     NODE_ENV: "production",
   };
@@ -1175,25 +1126,17 @@ async function resolveRuntimeConfig(options: {
   const merged = { ...builtin, ...custom };
   // User transforms may refine built-in fields, but cannot invalidate their public contract.
   return { ...merged, ...validateDefaultConfig(merged) };
-
 }
 
-export function getModuleCtx(): ModuleContext<
-  RuntimeConfigShape,
-  RuntimeInfraShape,
-  RuntimeBus
-> {
+export function getModuleCtx(): ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus> {
   const stored = runtimeGlobalState.moduleContextStorage.getStore();
-  if (stored) return stored as unknown as ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus>;
+  if (stored)
+    return stored as unknown as ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus>;
   const callerFilePath = resolveCallerFilePath(getModuleCtx);
   const imported = getImportScope(callerFilePath);
   const current = imported?.module;
   if (current) {
-    return current as unknown as ModuleContext<
-      RuntimeConfigShape,
-      RuntimeInfraShape,
-      RuntimeBus
-    >;
+    return current as unknown as ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus>;
   }
 
   const pending = runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build;
@@ -1215,17 +1158,10 @@ export function getModuleCtx(): ModuleContext<
     logger: activeRuntime.logger,
     infra: activeRuntime.infra,
     bus: activeRuntime.bus,
-  } as unknown as ModuleContext<
-    RuntimeConfigShape,
-    RuntimeInfraShape,
-    RuntimeBus
-  >;
+  } as unknown as ModuleContext<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus>;
 }
 
-export function getTransportCtx(): TransportContext<
-  RuntimeConfigShape,
-  RuntimeBus
-> {
+export function getTransportCtx(): TransportContext<RuntimeConfigShape, RuntimeBus> {
   const callerFilePath = resolveCallerFilePath(getTransportCtx);
   const imported = getImportScope(callerFilePath);
   const stored = runtimeGlobalState.transportContextStorage.getStore();
@@ -1233,7 +1169,11 @@ export function getTransportCtx(): TransportContext<
   const pending = runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build;
   const guard = stored
     ? runtimeGlobalState.transportCtxAccessGuardStorage.getStore()
-    : imported ? imported.guard : pending ? undefined : runtimeGlobalState.activeTransportCtxAccessGuard;
+    : imported
+      ? imported.guard
+      : pending
+        ? undefined
+        : runtimeGlobalState.activeTransportCtxAccessGuard;
 
   if (guard) {
     if (!isTransportCtxCallAllowed({ guard, callerFilePath })) {
@@ -1244,9 +1184,7 @@ export function getTransportCtx(): TransportContext<
           srcDir: guard.srcDir,
           filePath: callerFilePath,
         }),
-        notes: [
-          `allowed patterns (from src): ${guard.patterns.join(", ")}`,
-        ],
+        notes: [`allowed patterns (from src): ${guard.patterns.join(", ")}`],
         help: [
           "Add a matching path to defineTransport(..., { allowGetTransportCtxFrom: [...] }).",
           "Or move getTransportCtx() usage into an allowed transport file.",
@@ -1256,10 +1194,7 @@ export function getTransportCtx(): TransportContext<
   }
 
   if (current) {
-    return current as unknown as TransportContext<
-      RuntimeConfigShape,
-      RuntimeBus
-    >;
+    return current as unknown as TransportContext<RuntimeConfigShape, RuntimeBus>;
   }
 
   const activeRuntime = pending ? pending.runtime : runtimeGlobalState.activeRuntime;
@@ -1287,7 +1222,9 @@ export function buildRuntime(
   options: BuildRuntimeOptions = {},
 ): Promise<Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>> {
   if (getImportScope(resolveCallerFilePath(buildRuntime))) {
-    return Promise.reject(new Error("DISPATCHKIT_REENTRANT_BUILD: Cannot build a runtime during module evaluation"));
+    return Promise.reject(
+      new Error("DISPATCHKIT_REENTRANT_BUILD: Cannot build a runtime during module evaluation"),
+    );
   }
   return runtimeGlobalState.buildContextStorage.run({}, () => buildRuntimeImpl(options));
 }
@@ -1302,10 +1239,16 @@ async function buildRuntimeImpl(
     const srcDir = options.srcDir ? resolve(rootDir, options.srcDir) : join(rootDir, "src");
     runtimeGlobalState.buildContextStorage.getStore()!.srcDir = srcDir;
     const generatedDir = options.generatedDir
-      ? resolve(rootDir, options.generatedDir) : join(srcDir, "generated", "runtime");
+      ? resolve(rootDir, options.generatedDir)
+      : join(srcDir, "generated", "runtime");
     const envFile = options.envFile ? resolve(rootDir, options.envFile) : join(rootDir, ".env");
 
-    const config = await resolveRuntimeConfig({ rootDir, srcDir, envFile, overrides: extractConfigOverrides(options) });
+    const config = await resolveRuntimeConfig({
+      rootDir,
+      srcDir,
+      envFile,
+      overrides: extractConfigOverrides(options),
+    });
     const { logger, runtimeConsole } = await resolveLogger({ srcDir, config });
     const discovery = await discoverForArtifacts(srcDir);
     const loadedOperations = await loadOperationDefinitions(srcDir, discovery);
@@ -1313,7 +1256,11 @@ async function buildRuntimeImpl(
       config,
       logger,
       infra: Object.create(null),
-      bus: { query: Object.create(null), mutation: Object.create(null), action: Object.create(null) },
+      bus: {
+        query: Object.create(null),
+        mutation: Object.create(null),
+        action: Object.create(null),
+      },
       transport: Object.create(null),
       dispose() {
         runtimeGlobalState.disposedRuntimes.add(instance);
@@ -1329,25 +1276,46 @@ async function buildRuntimeImpl(
     runtimeRef = instance;
     instance.bus = buildBus(loadedOperations, () => instance);
     const moduleCtx: ModuleContext<RuntimeConfig, Record<string, unknown>, RuntimeBusBase> = {
-      config, logger, infra: instance.infra, bus: instance.bus,
+      config,
+      logger,
+      infra: instance.infra,
+      bus: instance.bus,
     };
-    const infraResult = await loadInfraModules({ srcDir, discovery, ctx: moduleCtx, onDispose: lifecycle.onDispose });
+    const infraResult = await loadInfraModules({
+      srcDir,
+      discovery,
+      ctx: moduleCtx,
+      onDispose: lifecycle.onDispose,
+    });
     instance.infra = infraResult.infra;
     moduleCtx.infra = instance.infra;
     runtimeGlobalState.buildContextStorage.getStore()!.runtime = instance;
     const transportCtx: TransportFactoryContext<RuntimeConfig, RuntimeBusBase> = {
-      config, logger, bus: instance.bus, onDispose: lifecycle.onDispose,
+      config,
+      logger,
+      bus: instance.bus,
+      onDispose: lifecycle.onDispose,
     };
     const transportModules = [...discovery.transport, ...infraResult.transportFromInfra].sort(
-      (left, right) => left.key.localeCompare(right.key) || left.source.localeCompare(right.source) || left.filePath.localeCompare(right.filePath),
+      (left, right) =>
+        left.key.localeCompare(right.key) ||
+        left.source.localeCompare(right.source) ||
+        left.filePath.localeCompare(right.filePath),
     );
     // Validate collisions before starting any transport resources.
     const transportKeys = new Set<string>();
     for (const module of transportModules) {
-      if (transportKeys.has(module.key)) throw new Error(`DISPATCHKIT_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`);
+      if (transportKeys.has(module.key))
+        throw new Error(
+          `DISPATCHKIT_TRANSPORT_KEY_COLLISION: Duplicate transport key "${module.key}"`,
+        );
       transportKeys.add(module.key);
     }
-    const transportLoad = await loadTransportModules({ srcDir, transportModules, ctx: transportCtx });
+    const transportLoad = await loadTransportModules({
+      srcDir,
+      transportModules,
+      ctx: transportCtx,
+    });
     instance.transport = transportLoad.transport;
     if (options.generateArtifacts !== false) {
       mkdirSync(generatedDir, { recursive: true });
@@ -1356,7 +1324,9 @@ async function buildRuntimeImpl(
         generatedDir,
         discovery: {
           ...discovery,
-          infra: discovery.infra.filter(file => !infraResult.transportFromInfra.some(module => module.filePath === file)),
+          infra: discovery.infra.filter(
+            (file) => !infraResult.transportFromInfra.some((module) => module.filePath === file),
+          ),
           transport: transportModules,
         },
       });
@@ -1367,12 +1337,22 @@ async function buildRuntimeImpl(
       runtimeGlobalState.activeTransportCtxAccessGuard = transportLoad.guard;
       (globalThis as typeof globalThis & { runtime: unknown }).runtime = instance as any;
     }
-    return instance as unknown as Runtime<RuntimeConfigShape, RuntimeInfraShape, RuntimeBus, RuntimeTransportShape>;
+    return instance as unknown as Runtime<
+      RuntimeConfigShape,
+      RuntimeInfraShape,
+      RuntimeBus,
+      RuntimeTransportShape
+    >;
   } catch (error) {
     if (runtimeRef) runtimeGlobalState.disposedRuntimes.add(runtimeRef);
-    try { await lifecycle.dispose(); }
-    catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "DISPATCHKIT_BUILD_FAILED: Initialization and cleanup failed", { cause: error });
+    try {
+      await lifecycle.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "DISPATCHKIT_BUILD_FAILED: Initialization and cleanup failed",
+        { cause: error },
+      );
     }
     throw error;
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+
 import {
   cliEntry,
   dispatchkitImportLine,
@@ -39,14 +40,8 @@ describe("cli", () => {
   });
 
   it("rejects unknown options and options without values", () => {
-    const unknownOption = runCommand(
-      ["bun", cliEntry, "generate", "--unknown"],
-      repoRoot,
-    );
-    const missingValue = runCommand(
-      ["bun", cliEntry, "generate", "--srcDir"],
-      repoRoot,
-    );
+    const unknownOption = runCommand(["bun", cliEntry, "generate", "--unknown"], repoRoot);
+    const missingValue = runCommand(["bun", cliEntry, "generate", "--srcDir"], repoRoot);
 
     expect(unknownOption.exitCode).toBe(1);
     expect(unknownOption.stderr).toContain("Unknown option");
@@ -57,10 +52,22 @@ describe("cli", () => {
 
   it("resolves relative directory flags against --rootDir", async () => {
     await withTempProject(
-      { "app/modules/ping.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: () => true });` },
+      {
+        "app/modules/ping.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: () => true });`,
+      },
       async (rootDir) => {
         const result = runCommand(
-          ["bun", cliEntry, "generate", "--rootDir", rootDir, "--srcDir", "app", "--generatedDir", "types"],
+          [
+            "bun",
+            cliEntry,
+            "generate",
+            "--rootDir",
+            rootDir,
+            "--srcDir",
+            "app",
+            "--generatedDir",
+            "types",
+          ],
           repoRoot,
         );
         expect(result.exitCode).toBe(0);
@@ -101,7 +108,9 @@ describe("cli", () => {
             `${dispatchkitImportLine()}\nexport default defineTransport(() => ({}));`,
           );
           await waitFor(async () => {
-            const manifest = await Bun.file(join(rootDir, "src/generated/runtime/manifest.json")).json();
+            const manifest = await Bun.file(
+              join(rootDir, "src/generated/runtime/manifest.json"),
+            ).json();
             return manifest.transport.length === 1;
           });
           expect(output).toContain("regenerated runtime artifacts");

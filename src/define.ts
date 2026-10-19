@@ -25,7 +25,16 @@ type DefineOperationOptions<
 > = {
   input?: TInput;
   return?: TReturn;
-  handler: OperationDefinition<TKind, TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult>["handler"];
+  handler: OperationDefinition<
+    TKind,
+    TInput,
+    TReturn,
+    TConfig,
+    TInfra,
+    TBus,
+    RuntimeLoggerShape,
+    TResult
+  >["handler"];
 };
 
 function defineOperation<
@@ -58,7 +67,16 @@ export function defineQuery<
   TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
   options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "query", TResult>,
-): OperationDefinition<"query", TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
+): OperationDefinition<
+  "query",
+  TInput,
+  TReturn,
+  TConfig,
+  TInfra,
+  TBus,
+  RuntimeLoggerShape,
+  TResult
+> {
   return defineOperation("query", options);
 }
 
@@ -71,7 +89,16 @@ export function defineMutation<
   TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
   options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "mutation", TResult>,
-): OperationDefinition<"mutation", TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
+): OperationDefinition<
+  "mutation",
+  TInput,
+  TReturn,
+  TConfig,
+  TInfra,
+  TBus,
+  RuntimeLoggerShape,
+  TResult
+> {
   return defineOperation("mutation", options);
 }
 
@@ -84,23 +111,27 @@ export function defineAction<
   TResult extends SchemaInput<TReturn> = SchemaInput<TReturn>,
 >(
   options: DefineOperationOptions<TInput, TReturn, TConfig, TInfra, TBus, "action", TResult>,
-): OperationDefinition<"action", TInput, TReturn, TConfig, TInfra, TBus, RuntimeLoggerShape, TResult> {
+): OperationDefinition<
+  "action",
+  TInput,
+  TReturn,
+  TConfig,
+  TInfra,
+  TBus,
+  RuntimeLoggerShape,
+  TResult
+> {
   return defineOperation("action", options);
 }
 
-export function defineConfig<TSchema extends Schema>(
-  schema: TSchema,
-): ConfigDefinition<TSchema> {
+export function defineConfig<TSchema extends Schema>(schema: TSchema): ConfigDefinition<TSchema> {
   return {
     __dispatchkitType: "config",
     schema,
   };
 }
 
-export function defineLogger<
-  TConfig = RuntimeConfigShape,
-  TLogger extends LoggerLike = LoggerLike,
->(
+export function defineLogger<TConfig = RuntimeConfigShape, TLogger extends LoggerLike = LoggerLike>(
   factory: LoggerDefinition<TConfig, TLogger>["factory"],
 ): LoggerDefinition<TConfig, TLogger> {
   return {
@@ -109,10 +140,7 @@ export function defineLogger<
   };
 }
 
-export function defineInfra<
-  TConfig = RuntimeConfigShape,
-  TResult = unknown,
->(
+export function defineInfra<TConfig = RuntimeConfigShape, TResult = unknown>(
   factory: InfraDefinition<TConfig, TResult>["factory"],
 ): InfraDefinition<TConfig, TResult> {
   return {
@@ -121,11 +149,7 @@ export function defineInfra<
   };
 }
 
-export function defineTransport<
-  TConfig = RuntimeConfigShape,
-  TBus = RuntimeBus,
-  TResult = unknown,
->(
+export function defineTransport<TConfig = RuntimeConfigShape, TBus = RuntimeBus, TResult = unknown>(
   factory: TransportDefinition<TConfig, TBus, TResult>["factory"],
   options?: TransportDefinition<TConfig, TBus, TResult>["options"],
 ): TransportDefinition<TConfig, TBus, TResult> {

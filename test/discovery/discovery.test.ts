@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+
 import { discoverRuntimeFiles, resolveOperationName } from "../../src/discovery.ts";
 import { dispatchkitImportLine, withTempProject } from "../test-helpers.ts";
 
@@ -79,7 +80,10 @@ describe("naming", () => {
       { "src/modules/constructor/has-own-property.query.ts": "export default {};" },
       async (rootDir) => {
         const discovery = await discoverRuntimeFiles(join(rootDir, "src"));
-        expect(discovery.operations[0]?.operationSegments).toEqual(["constructor", "hasOwnProperty"]);
+        expect(discovery.operations[0]?.operationSegments).toEqual([
+          "constructor",
+          "hasOwnProperty",
+        ]);
       },
     );
   });

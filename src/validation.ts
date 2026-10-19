@@ -10,10 +10,15 @@ export class StandardSchemaError extends Error {
 }
 
 export function assertStandardSchema(schema: unknown): asserts schema is StandardSchemaV1 {
-  const standard = schema && (typeof schema === "object" || typeof schema === "function")
-    ? (schema as StandardSchemaV1)["~standard"]
-    : undefined;
-  if (standard?.version !== 1 || typeof standard.vendor !== "string" || typeof standard.validate !== "function") {
+  const standard =
+    schema && (typeof schema === "object" || typeof schema === "function")
+      ? (schema as StandardSchemaV1)["~standard"]
+      : undefined;
+  if (
+    standard?.version !== 1 ||
+    typeof standard.vendor !== "string" ||
+    typeof standard.validate !== "function"
+  ) {
     throw new TypeError("DISPATCHKIT_INVALID_SCHEMA: Expected a Standard Schema v1 validator");
   }
 }

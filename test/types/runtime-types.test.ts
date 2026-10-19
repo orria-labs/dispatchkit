@@ -2,7 +2,8 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoRoot, runCommand, writeProjectFiles, type FileMap } from "../test-helpers.ts";
+
+import { type FileMap, repoRoot, runCommand, writeProjectFiles } from "../test-helpers.ts";
 
 function checkedCommand(command: string[], cwd: string): ReturnType<typeof runCommand> {
   const result = runCommand(command, cwd);
@@ -228,19 +229,23 @@ describe("packaged consumer types", () => {
   }, 30_000);
 
   it("preserves generated config, infra, transport and Standard Schema boundaries", async () => {
-    await withPackagedConsumer(consumerFiles, rootDir => {
-      const result = checkedCommand(["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit"], rootDir);
+    await withPackagedConsumer(consumerFiles, (rootDir) => {
+      const result = checkedCommand(
+        ["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit"],
+        rootDir,
+      );
       expect(result.exitCode).toBe(0);
     });
   }, 30_000);
 
   it("preserves Elysia 2 codec input/output in the packaged adapter", async () => {
-    await withPackagedConsumer({
-      "src/config.ts": `${imports}
+    await withPackagedConsumer(
+      {
+        "src/config.ts": `${imports}
 import { t } from "elysia-v2";
 import { standardSchema } from "@orria/dispatchkit/typebox-v1";
 export default defineConfig(standardSchema(t.Object({ PORT: t.Numeric() })));`,
-      "src/modules/numeric.query.ts": `${imports}
+        "src/modules/numeric.query.ts": `${imports}
 import { t } from "elysia-v2";
 import { standardSchema } from "@orria/dispatchkit/typebox-v1";
 export default defineQuery({
@@ -254,7 +259,7 @@ export default defineQuery({
     return String(count + port);
   },
 });`,
-      "src/main.ts": `import { buildRuntime } from "@orria/dispatchkit";
+        "src/main.ts": `import { buildRuntime } from "@orria/dispatchkit";
 const runtime = await buildRuntime();
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type Assert<T extends true> = T;
@@ -277,26 +282,34 @@ await runtime.bus.query.numeric.$unsafe({ count: "123" });
 const wrongUnsafe: number = await runtime.bus.query.numeric.$unsafe({ count: 123 });
 // @ts-expect-error Config Numeric is decoded to a number.
 const wrongPort: string = runtime.config.PORT;`,
-    }, rootDir => {
-      // Elysia 2 beta has unrelated errors in its HTTP/macro declarations.
-      // Core and both adapters are checked with skipLibCheck=false above;
-      // this integration also asserts exact types and rejects any leakage.
-      const result = checkedCommand(["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit", "--skipLibCheck"], rootDir);
-      expect(result.exitCode).toBe(0);
-    });
+      },
+      (rootDir) => {
+        // Elysia 2 beta has unrelated errors in its HTTP/macro declarations.
+        // Core and both adapters are checked with skipLibCheck=false above;
+        // this integration also asserts exact types and rejects any leakage.
+        const result = checkedCommand(
+          ["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit", "--skipLibCheck"],
+          rootDir,
+        );
+        expect(result.exitCode).toBe(0);
+      },
+    );
   }, 30_000);
 
   it("rejects a bad consumer assignment without suppression", async () => {
-    await withPackagedConsumer({
-      "src/config.ts": consumerFiles["src/config.ts"]!,
-      "src/main.ts": `import { buildRuntime } from "@orria/dispatchkit";
+    await withPackagedConsumer(
+      {
+        "src/config.ts": consumerFiles["src/config.ts"]!,
+        "src/main.ts": `import { buildRuntime } from "@orria/dispatchkit";
 const runtime = await buildRuntime();
 const invalidPort: string = runtime.config.PORT;`,
-    }, rootDir => {
-      const result = runCommand(["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit"], rootDir);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stdout).toContain("Type 'number' is not assignable to type 'string'");
-      expect(result.stdout).not.toContain("Cannot find module");
-    });
+      },
+      (rootDir) => {
+        const result = runCommand(["bun", "x", "tsc", "-p", "tsconfig.json", "--noEmit"], rootDir);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stdout).toContain("Type 'number' is not assignable to type 'string'");
+        expect(result.stdout).not.toContain("Cannot find module");
+      },
+    );
   }, 30_000);
 });

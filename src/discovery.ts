@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, posix } from "node:path";
+
 import type {
   DiscoveredOperation,
   DiscoveredTransport,
@@ -18,11 +19,7 @@ function sortUnique(values: string[]): string[] {
 }
 
 function toCamelSegment(input: string): string {
-  const parts = input
-    .replace(NON_ALNUM, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = input.replace(NON_ALNUM, " ").trim().split(/\s+/).filter(Boolean);
 
   if (parts.length === 0) {
     throw new Error(`DISPATCHKIT_DISCOVERY_INVALID_SEGMENT: Cannot derive segment from "${input}"`);

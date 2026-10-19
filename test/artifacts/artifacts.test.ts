@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildRuntime, generateRuntime } from "../../src/index.ts";
+
 import { parse } from "@babel/parser";
+
+import { buildRuntime, generateRuntime } from "../../src/index.ts";
 import {
   createTempProject,
   dispatchkitImportLine,
@@ -66,9 +68,7 @@ describe("artifacts generation", () => {
         };
 
         expect(manifest.infra).toEqual([{ filePath: "storage.ts" }]);
-        expect(manifest.transport).toEqual([
-          { key: "http", filePath: "http.ts", source: "infra" },
-        ]);
+        expect(manifest.transport).toEqual([{ key: "http", filePath: "http.ts", source: "infra" }]);
       },
     );
   });
@@ -90,7 +90,11 @@ describe("artifacts generation", () => {
         const result = await generateRuntime({ rootDir });
         expect(result.discovery.infra).toEqual(["comment.ts"]);
         expect(result.discovery.transport.map((module) => module.key)).toEqual([
-          "alias", "default-import", "generic", "namespace", "reexport",
+          "alias",
+          "default-import",
+          "generic",
+          "namespace",
+          "reexport",
         ]);
       },
     );
@@ -102,7 +106,9 @@ describe("artifacts generation", () => {
         "src/infra/server.ts": `${dispatchkitImportLine()}\nfunction build() { return defineTransport(() => ({})); }\nexport default build();`,
       },
       async (rootDir) => {
-        await expect(generateRuntime({ rootDir })).rejects.toThrow("DISPATCHKIT_DISCOVERY_UNKNOWN_DEFINITION");
+        await expect(generateRuntime({ rootDir })).rejects.toThrow(
+          "DISPATCHKIT_DISCOVERY_UNKNOWN_DEFINITION",
+        );
       },
     );
   });
@@ -114,7 +120,9 @@ describe("artifacts generation", () => {
         "src/modules/widget/get.query.ts": `${dispatchkitImportLine()}\nexport default defineQuery({ handler: () => 2 });`,
       },
       async (rootDir) => {
-        await expect(generateRuntime({ rootDir })).rejects.toThrow("DISPATCHKIT_BUS_GROUP_COLLISION");
+        await expect(generateRuntime({ rootDir })).rejects.toThrow(
+          "DISPATCHKIT_BUS_GROUP_COLLISION",
+        );
         await expect(buildRuntime({ rootDir })).rejects.toThrow("DISPATCHKIT_BUS_GROUP_COLLISION");
       },
     );
@@ -132,7 +140,9 @@ describe("artifacts generation", () => {
         expect(generated.generatedDir).toBe(join(rootDir, "types"));
         const source = readFileSync(join(generated.generatedDir, "bus.d.ts"), "utf8");
         const ast = parse(source, { sourceType: "module", plugins: ["typescript"] });
-        const specifiers = ast.program.body.flatMap((node) => node.type === "ImportDeclaration" ? [node.source.value] : []);
+        const specifiers = ast.program.body.flatMap((node) =>
+          node.type === "ImportDeclaration" ? [node.source.value] : [],
+        );
         expect(specifiers).toContain('../app/modules/quote"name.query');
         expect(specifiers).toContain('../app/infra/quote"infra');
       },
@@ -259,9 +269,7 @@ describe("artifacts runtime outputs", () => {
         expect((runtime.transport as Record<string, unknown>)["my-transport"]).toEqual({
           kind: "first",
         });
-        expect(
-          (runtime.transport as Record<string, unknown>)["my-second-transport"],
-        ).toEqual({
+        expect((runtime.transport as Record<string, unknown>)["my-second-transport"]).toEqual({
           kind: "second",
         });
 

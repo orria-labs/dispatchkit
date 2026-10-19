@@ -12,18 +12,17 @@ export type LoggerLike = {
   child?: (bindings: Record<string, unknown>) => LoggerLike;
 };
 
-export type ConsoleLike = Pick<
-  Console,
-  "log" | "info" | "warn" | "error" | "debug" | "trace"
->;
+export type ConsoleLike = Pick<Console, "log" | "info" | "warn" | "error" | "debug" | "trace">;
 
 export type Schema = StandardSchemaV1;
 
-export type SchemaInput<TSchema, TFallback = unknown> =
-  TSchema extends StandardSchemaV1 ? StandardSchemaV1.InferInput<TSchema> : TFallback;
+export type SchemaInput<TSchema, TFallback = unknown> = TSchema extends StandardSchemaV1
+  ? StandardSchemaV1.InferInput<TSchema>
+  : TFallback;
 
-export type SchemaOutput<TSchema, TFallback = unknown> =
-  TSchema extends StandardSchemaV1 ? StandardSchemaV1.InferOutput<TSchema> : TFallback;
+export type SchemaOutput<TSchema, TFallback = unknown> = TSchema extends StandardSchemaV1
+  ? StandardSchemaV1.InferOutput<TSchema>
+  : TFallback;
 
 export type BusMethod<
   TInput,
@@ -34,7 +33,9 @@ export type BusMethod<
   TReturnSchema extends Schema | undefined = Schema | undefined,
 > = {
   (...args: undefined extends TInput ? [input?: TInput] : [input: TInput]): Promise<TReturn>;
-  $unsafe: (...args: undefined extends TUnsafeInput ? [input?: TUnsafeInput] : [input: TUnsafeInput]) => Promise<TUnsafeReturn>;
+  $unsafe: (
+    ...args: undefined extends TUnsafeInput ? [input?: TUnsafeInput] : [input: TUnsafeInput]
+  ) => Promise<TUnsafeReturn>;
   $input: TInputSchema;
   $return: TReturnSchema;
 };
@@ -139,7 +140,8 @@ export interface TransportFactoryContext<
   TConfig = RuntimeConfigShape,
   TBus = RuntimeBus,
   TLogger = RuntimeLoggerShape,
-> extends TransportContext<TConfig, TBus, TLogger>, RuntimeLifecycleContext {}
+>
+  extends TransportContext<TConfig, TBus, TLogger>, RuntimeLifecycleContext {}
 
 export type ModuleHandlerContext<
   TInput = unknown,
@@ -166,23 +168,20 @@ export interface OperationDefinition<
   readonly input?: TInputSchema;
   readonly return?: TReturnSchema;
   readonly handler: (
-    ctx: ModuleHandlerContext<
-      SchemaOutput<TInputSchema>,
-      TConfig,
-      TInfra,
-      TBus,
-      TLogger
-    >,
+    ctx: ModuleHandlerContext<SchemaOutput<TInputSchema>, TConfig, TInfra, TBus, TLogger>,
   ) => TResult | Promise<TResult>;
 }
 
-export type OperationInput<T> =
-  T extends { readonly input?: infer TSchema } ? SchemaInput<TSchema> : never;
+export type OperationInput<T> = T extends { readonly input?: infer TSchema }
+  ? SchemaInput<TSchema>
+  : never;
 
-export type OperationReturn<T> =
-  T extends { readonly return?: infer TSchema; readonly handler: (...args: any[]) => infer TResult }
-    ? SchemaOutput<TSchema, Awaited<TResult>>
-    : never;
+export type OperationReturn<T> = T extends {
+  readonly return?: infer TSchema;
+  readonly handler: (...args: any[]) => infer TResult;
+}
+  ? SchemaOutput<TSchema, Awaited<TResult>>
+  : never;
 
 export type OperationBusMethod<
   T extends {
@@ -228,8 +227,9 @@ export interface TransportDefinition<
   TLogger = RuntimeLoggerShape,
 > {
   readonly __dispatchkitType: "transport";
-  readonly factory:
-    (ctx: TransportFactoryContext<TConfig, TBus, TLogger>) => TResult | Promise<TResult>;
+  readonly factory: (
+    ctx: TransportFactoryContext<TConfig, TBus, TLogger>,
+  ) => TResult | Promise<TResult>;
   readonly options?: TransportDefinitionOptions;
 }
 
@@ -275,16 +275,17 @@ export interface BuildRuntimeOptions {
 
 export type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
-export type UnionToIntersection<T> =
-  (T extends unknown ? (value: T) => void : never) extends (value: infer R) => void ? R
+export type UnionToIntersection<T> = (T extends unknown ? (value: T) => void : never) extends (
+  value: infer R,
+) => void
+  ? R
   : never;
 
 export type InferInfraModule<T> =
   T extends InfraDefinition<any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
 
 export type InferTransportModule<T> =
-  T extends TransportDefinition<any, any, any, any> ? Awaited<ReturnType<T["factory"]>>
-  : never;
+  T extends TransportDefinition<any, any, any, any> ? Awaited<ReturnType<T["factory"]>> : never;
 
 export type InferConfigFromDefinition<T> =
   T extends ConfigDefinition<infer TSchema> ? SchemaOutput<TSchema> : {};

@@ -218,8 +218,8 @@ const runtime = await buildRuntime({
 ```ts
 // src/modules/increment.query.ts
 import { defineQuery } from "@orria/dispatchkit";
-import { z } from "zod";
 import * as v from "valibot";
+import { z } from "zod";
 
 export default defineQuery({
   input: z.string().regex(/^\d+$/).transform(Number),
@@ -243,17 +243,17 @@ await runtime.bus.query.increment.$unsafe(41); // 42
 
 Elysia's `t` schemas need an adapter. Choose the subpath that matches the TypeBox version:
 
-| Schema source | Install alongside Dispatchkit | Adapter import |
-| --- | --- | --- |
-| Elysia 1, `@sinclair/typebox` 0.34 | `bun add @sinclair/typebox` | `@orria/dispatchkit/typebox` |
-| Elysia 2, `typebox` 1 | `bun add typebox` | `@orria/dispatchkit/typebox-v1` |
+| Schema source                      | Install alongside Dispatchkit | Adapter import                  |
+| ---------------------------------- | ----------------------------- | ------------------------------- |
+| Elysia 1, `@sinclair/typebox` 0.34 | `bun add @sinclair/typebox`   | `@orria/dispatchkit/typebox`    |
+| Elysia 2, `typebox` 1              | `bun add typebox`             | `@orria/dispatchkit/typebox-v1` |
 
 The adapters are optional imports; the core does not load TypeBox. Elysia 2 integration is tested with `elysia@2.0.0-beta.14` and `typebox@1.3.28`.
 
 ```ts
+import { standardSchema } from "@orria/dispatchkit/typebox";
 // Elysia 1
 import { t } from "elysia";
-import { standardSchema } from "@orria/dispatchkit/typebox";
 
 const input = standardSchema(t.Object({ id: t.String() }));
 ```
@@ -263,8 +263,8 @@ For Elysia 2, use `standardSchema(schema, context?)` from `@orria/dispatchkit/ty
 ```ts
 // Elysia 2
 import { defineQuery } from "@orria/dispatchkit";
-import { t } from "elysia";
 import { standardSchema } from "@orria/dispatchkit/typebox-v1";
+import { t } from "elysia";
 
 export default defineQuery({
   input: standardSchema(t.Object({ count: t.Numeric() })),
@@ -277,12 +277,14 @@ The TypeBox 0.34 adapter accepts `standardSchema(schema, references?)` and prese
 
 ```ts
 import { defineQuery } from "@orria/dispatchkit";
-import { Type } from "@sinclair/typebox";
 import { standardSchema } from "@orria/dispatchkit/typebox";
+import { Type } from "@sinclair/typebox";
 
 export default defineQuery({
   input: standardSchema(
-    Type.Transform(Type.String()).Decode((value) => value.length).Encode(String),
+    Type.Transform(Type.String())
+      .Decode((value) => value.length)
+      .Encode(String),
   ),
   handler: ({ input }) => input * 2,
 });
@@ -306,7 +308,9 @@ export default defineTransport(({ onDispose }) => {
     port: 3000,
     fetch: () => new Response("ok"),
   });
-  onDispose(() => { server.stop(true); });
+  onDispose(() => {
+    server.stop(true);
+  });
   return server;
 });
 ```

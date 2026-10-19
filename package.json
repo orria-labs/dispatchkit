@@ -1,82 +1,84 @@
 {
-	"name": "@orria/dispatchkit",
-	"version": "1.1.0",
-	"description": "Lightweight CQRS-lite application framework and runtime toolkit for Bun.",
-	"license": "MIT",
-	"type": "module",
-	"main": "./dist/index.js",
-	"module": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"bin": {
-		"dispatchkit": "dist/cli.js"
-	},
-	"files": [
-		"dist",
-		"README.md",
-		"LICENSE",
-		"docs/README.ru.md",
-		"docs/assets/logo.svg"
-	],
-	"scripts": {
-		"clean": "rm -rf dist",
-		"build": "bun run clean && bun x tsc -p tsconfig.build.json && node ./scripts/postbuild.mjs && chmod +x dist/cli.js",
-		"prepack": "bun run build",
-		"test": "bun test ./test"
-	},
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"default": "./dist/index.js"
-		},
-		"./typebox": {
-			"types": "./dist/typebox.d.ts",
-			"import": "./dist/typebox.js",
-			"default": "./dist/typebox.js"
-		},
-		"./typebox-v1": {
-			"types": "./dist/typebox-v1.d.ts",
-			"import": "./dist/typebox-v1.js",
-			"default": "./dist/typebox-v1.js"
-		}
-	},
-	"publishConfig": {
-		"access": "public"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/orria-labs/dispatchkit.git"
-	},
-	"homepage": "https://github.com/orria-labs/dispatchkit#readme",
-	"bugs": {
-		"url": "https://github.com/orria-labs/dispatchkit/issues"
-	},
-	"devDependencies": {
-		"@babel/types": "^8.0.4",
-		"@sinclair/typebox": "^0.34.52",
-		"@types/bun": "^1.3.14",
-		"elysia": "^1.4.30",
-		"elysia-v2": "npm:elysia@2.0.0-beta.14",
-		"typebox": "^1.3.28",
-		"valibot": "^1.4.2",
-		"zod": "^4.4.3"
-	},
-	"dependencies": {
-		"@babel/parser": "^8.0.4",
-		"@standard-schema/spec": "^1.1.0",
-		"dotenv": "^17.4.2"
-	},
-	"peerDependencies": {
-		"typescript": "^7.0.2",
-		"@sinclair/typebox": "^0.34.52",
-		"typebox": "^1.3.28"
-	},
-	"peerDependenciesMeta": {
-		"@sinclair/typebox": {
-			"optional": true
-		},
-		"typebox": {
-			"optional": true
-		}
-	}
+  "name": "@orria/dispatchkit",
+  "version": "1.1.0",
+  "description": "Lightweight CQRS-lite application framework and runtime toolkit for Bun.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "dispatchkit": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs/README.ru.md",
+    "docs/assets/logo.svg"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "bun run clean && tsc -p tsconfig.build.json && node ./scripts/postbuild.mjs && chmod +x dist/cli.js",
+    "prepack": "bun run verify && bun run build",
+    "test": "bun test ./test",
+    "verify": "bun fmt --check && bun check && bun test ./test"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./typebox": {
+      "types": "./dist/typebox.d.ts",
+      "import": "./dist/typebox.js",
+      "default": "./dist/typebox.js"
+    },
+    "./typebox-v1": {
+      "types": "./dist/typebox-v1.d.ts",
+      "import": "./dist/typebox-v1.js",
+      "default": "./dist/typebox-v1.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orria-labs/dispatchkit.git"
+  },
+  "homepage": "https://github.com/orria-labs/dispatchkit#readme",
+  "bugs": {
+    "url": "https://github.com/orria-labs/dispatchkit/issues"
+  },
+  "devDependencies": {
+    "@babel/types": "^8.0.4",
+    "@sinclair/typebox": "^0.34.52",
+    "@types/bun": "^1.3.14",
+    "elysia": "^1.4.30",
+    "elysia-v2": "npm:elysia@2.0.0-beta.14",
+    "typebox": "^1.3.28",
+    "typescript": "^7.0.2",
+    "valibot": "^1.4.2",
+    "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.0.4",
+    "@standard-schema/spec": "^1.1.0",
+    "dotenv": "^17.4.2"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2",
+    "@sinclair/typebox": "^0.34.52",
+    "typebox": "^1.3.28"
+  },
+  "peerDependenciesMeta": {
+    "@sinclair/typebox": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
 }

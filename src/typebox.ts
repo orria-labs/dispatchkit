@@ -1,12 +1,15 @@
-import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { StaticDecode, StaticEncode, TSchema } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import { TransformDecodeCheckError, TransformDecodeError } from "@sinclair/typebox/value";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 function issuePath(pointer: string): string[] {
   return pointer === ""
     ? []
-    : pointer.slice(1).split("/").map((key) => key.replace(/~1/g, "/").replace(/~0/g, "~"));
+    : pointer
+        .slice(1)
+        .split("/")
+        .map((key) => key.replace(/~1/g, "/").replace(/~0/g, "~"));
 }
 
 // TypeBox 0.34 escapes validation pointers, but leaves Decode error paths raw.

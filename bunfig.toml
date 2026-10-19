@@ -1,0 +1,11 @@
+[fmt]
+printWidth = 100
+sortImports = true
+
+[lint]
+typeAware = true
+# placeholder declarations of this package; real ones are generated in user projects
+ignorePatterns = ["src/generated/"]
+
+[lint.rules]
+"eqeqeq" = ["error", "smart"]

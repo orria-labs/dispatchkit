@@ -1,7 +1,8 @@
-import { parse } from "@babel/parser";
-import type { Node } from "@babel/types";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { parse } from "@babel/parser";
+import type { Node } from "@babel/types";
 
 type DefinitionKind = "infra" | "transport";
 type Reference = { source: string; imported: string };
@@ -18,8 +19,10 @@ type ModuleInfo = {
 
 const ownDir = dirname(fileURLToPath(import.meta.url));
 const ownEntries = new Set([
-  join(ownDir, "index.ts"), join(ownDir, "index.js"),
-  join(ownDir, "define.ts"), join(ownDir, "define.js"),
+  join(ownDir, "index.ts"),
+  join(ownDir, "index.js"),
+  join(ownDir, "define.ts"),
+  join(ownDir, "define.js"),
 ]);
 
 /** Follow syntax and module references only; never import application code. */
@@ -51,9 +54,14 @@ export function createModuleClassifier(): (filePath: string) => Promise<Definiti
         if (node.type === "ImportDeclaration" && node.importKind !== "type") {
           for (const specifier of node.specifiers) {
             if (specifier.type === "ImportSpecifier" && specifier.importKind === "type") continue;
-            const imported = specifier.type === "ImportDefaultSpecifier" ? "default"
-              : specifier.type === "ImportNamespaceSpecifier" ? "*"
-              : specifier.imported.type === "Identifier" ? specifier.imported.name : specifier.imported.value;
+            const imported =
+              specifier.type === "ImportDefaultSpecifier"
+                ? "default"
+                : specifier.type === "ImportNamespaceSpecifier"
+                  ? "*"
+                  : specifier.imported.type === "Identifier"
+                    ? specifier.imported.name
+                    : specifier.imported.value;
             info.bindings.set(specifier.local.name, { source: node.source.value, imported });
           }
         } else if (node.type === "ExportDefaultDeclaration") {
@@ -62,9 +70,15 @@ export function createModuleClassifier(): (filePath: string) => Promise<Definiti
           addDeclaration(node.declaration, true);
           for (const specifier of node.specifiers) {
             if (specifier.type !== "ExportSpecifier" || specifier.exportKind === "type") continue;
-            const name = specifier.exported.type === "Identifier" ? specifier.exported.name : specifier.exported.value;
+            const name =
+              specifier.exported.type === "Identifier"
+                ? specifier.exported.name
+                : specifier.exported.value;
             const local = specifier.local.name;
-            info.exports.set(name, node.source ? { source: node.source.value, imported: local } : specifier.local);
+            info.exports.set(
+              name,
+              node.source ? { source: node.source.value, imported: local } : specifier.local,
+            );
           }
         } else if (node.type === "ExportAllDeclaration" && node.exportKind !== "type") {
           info.stars.push(node.source.value);
@@ -87,22 +101,37 @@ export function createModuleClassifier(): (filePath: string) => Promise<Definiti
     }
   }
 
-  async function evaluateReference(reference: Reference, filePath: string, seen: Set<string>): Promise<Value | undefined> {
+  async function evaluateReference(
+    reference: Reference,
+    filePath: string,
+    seen: Set<string>,
+  ): Promise<Value | undefined> {
     const resolved = resolveLocal(reference.source, filePath);
-    const own = reference.source === "@orria/dispatchkit" || (resolved !== undefined && ownEntries.has(resolved));
+    const own =
+      reference.source === "@orria/dispatchkit" ||
+      (resolved !== undefined && ownEntries.has(resolved));
     if (reference.imported === "*") {
       return { type: "namespace", source: reference.source, filePath };
     }
     if (own) {
-      const kind = reference.imported === "defineInfra" ? "infra"
-        : reference.imported === "defineTransport" ? "transport" : undefined;
+      const kind =
+        reference.imported === "defineInfra"
+          ? "infra"
+          : reference.imported === "defineTransport"
+            ? "transport"
+            : undefined;
       return kind ? { type: "factory", kind } : undefined;
     }
     if (!resolved) return undefined;
     return evaluateSymbol(resolved, reference.imported, true, seen);
   }
 
-  async function evaluateSymbol(filePath: string, name: string, exported: boolean, seen: Set<string>): Promise<Value | undefined> {
+  async function evaluateSymbol(
+    filePath: string,
+    name: string,
+    exported: boolean,
+    seen: Set<string>,
+  ): Promise<Value | undefined> {
     const key = JSON.stringify([filePath, name, exported]);
     if (seen.has(key)) return undefined;
     const nextSeen = new Set(seen).add(key);
@@ -118,7 +147,11 @@ export function createModuleClassifier(): (filePath: string) => Promise<Definiti
     return undefined;
   }
 
-  async function evaluate(node: Binding, filePath: string, seen: Set<string>): Promise<Value | undefined> {
+  async function evaluate(
+    node: Binding,
+    filePath: string,
+    seen: Set<string>,
+  ): Promise<Value | undefined> {
     if (!("type" in node)) return evaluateReference(node, filePath, seen);
     switch (node.type) {
       case "Identifier":
@@ -135,10 +168,19 @@ export function createModuleClassifier(): (filePath: string) => Promise<Definiti
       }
       case "MemberExpression": {
         const namespace = await evaluate(node.object, filePath, seen);
-        const name = !node.computed && node.property.type === "Identifier" ? node.property.name
-          : node.computed && node.property.type === "StringLiteral" ? node.property.value : undefined;
+        const name =
+          !node.computed && node.property.type === "Identifier"
+            ? node.property.name
+            : node.computed && node.property.type === "StringLiteral"
+              ? node.property.value
+              : undefined;
         return namespace?.type === "namespace" && name
-          ? evaluateReference({ source: namespace.source, imported: name }, namespace.filePath, seen) : undefined;
+          ? evaluateReference(
+              { source: namespace.source, imported: name },
+              namespace.filePath,
+              seen,
+            )
+          : undefined;
       }
       default:
         return undefined;

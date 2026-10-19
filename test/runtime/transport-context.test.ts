@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+
 import { buildRuntime } from "../../src/index.ts";
 import { dispatchkitImportLine, withTempProject } from "../test-helpers.ts";
 
@@ -120,9 +121,7 @@ export default defineQuery({ handler: async () => ({ ok: true }) });`,
 
         expect(transport.mytransport.direct()).toBe("dispatchkit-test-service");
         expect(transport.mytransport.allowed()).toBe("dispatchkit-test-service");
-        expect(() => transport.mytransport.forbidden()).toThrow(
-          "DISPATCHKIT_CONTEXT_FORBIDDEN",
-        );
+        expect(() => transport.mytransport.forbidden()).toThrow("DISPATCHKIT_CONTEXT_FORBIDDEN");
       },
     );
   });
