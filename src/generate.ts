@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync, watch } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { createModuleClassifier } from "./classify.ts";
@@ -20,7 +20,15 @@ export interface GenerateRuntimeResult {
 }
 
 export interface WatchRuntimeOptions extends GenerateRuntimeOptions {
+  /** Delay after the last file change before regenerating. Defaults to 100ms. */
+  debounceMs?: number;
+  /**
+   * @deprecated Watching is event-based now; used as `debounceMs` when that is not set.
+   * Must be >= 50 when provided.
+   */
   intervalMs?: number;
+  /** Stops watching when aborted. SIGINT/SIGTERM also stop it. */
+  signal?: AbortSignal;
   onInfo?: (message: string) => void;
   onError?: (error: unknown) => void;
 }
@@ -112,38 +120,25 @@ function resolvePaths(options: GenerateRuntimeOptions): {
   return { rootDir, srcDir, generatedDir };
 }
 
-async function collectWatchFingerprint(srcDir: string, generatedDir: string): Promise<string> {
-  if (!existsSync(srcDir)) return "";
-  const files = new Set<string>();
-  for await (const path of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan({
-    cwd: srcDir,
-  })) {
-    const normalized = normalizeSeparators(path);
-    const fromGenerated = normalizeSeparators(relative(generatedDir, join(srcDir, path)));
-    if (
-      /\.d\.(?:ts|mts|cts)$/.test(normalized) ||
-      normalized.split("/").some((part) => part === "node_modules" || part === ".git") ||
-      (fromGenerated !== ".." && !fromGenerated.startsWith("../") && !isAbsolute(fromGenerated))
-    )
-      continue;
-    files.add(normalized);
+const WATCHED_EXTENSION = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+const DECLARATION_FILE = /\.d\.(?:ts|mts|cts)$/;
+
+/**
+ * Whether a change under `srcDir` can affect discovery or generated types: any source file
+ * (classification follows local imports), plus extensionless paths, which may be directories
+ * being renamed or removed. Declarations, dependencies and the artifacts themselves are ignored.
+ */
+function isWatchedChange(srcDir: string, generatedDir: string, fileName: string): boolean {
+  const normalized = normalizeSeparators(fileName);
+  if (normalized.split("/").some((part) => part === "node_modules" || part === ".git")) {
+    return false;
   }
-
-  const rows = [...files].sort((left, right) => left.localeCompare(right));
-  const fingerprintRows: string[] = [];
-
-  for (const relativePath of rows) {
-    const absolutePath = join(srcDir, relativePath);
-    try {
-      const hasher = new Bun.CryptoHasher("sha256");
-      hasher.update(await Bun.file(absolutePath).arrayBuffer());
-      fingerprintRows.push(JSON.stringify([relativePath, hasher.digest("hex")]));
-    } catch {
-      fingerprintRows.push(`${relativePath}:deleted`);
-    }
+  const fromGenerated = normalizeSeparators(relative(generatedDir, join(srcDir, fileName)));
+  if (fromGenerated !== ".." && !fromGenerated.startsWith("../") && !isAbsolute(fromGenerated)) {
+    return false;
   }
-
-  return fingerprintRows.join("\n");
+  if (DECLARATION_FILE.test(normalized)) return false;
+  return WATCHED_EXTENSION.test(normalized) || !/\.[^/]+$/.test(normalized);
 }
 
 export async function generateRuntime(
@@ -168,55 +163,73 @@ export async function generateRuntime(
 }
 
 export async function watchRuntime(options: WatchRuntimeOptions = {}): Promise<void> {
-  const intervalMs = options.intervalMs ?? 400;
-  if (!Number.isFinite(intervalMs) || intervalMs < 50) {
+  if (
+    options.intervalMs !== undefined &&
+    (!Number.isFinite(options.intervalMs) || options.intervalMs < 50)
+  ) {
     throw new Error("DISPATCHKIT_WATCH_INVALID_INTERVAL: intervalMs must be a number >= 50");
+  }
+  const debounceMs = options.debounceMs ?? options.intervalMs ?? 100;
+  if (!Number.isFinite(debounceMs) || debounceMs < 0) {
+    throw new Error("DISPATCHKIT_WATCH_INVALID_INTERVAL: debounceMs must be a number >= 0");
   }
   const onInfo = options.onInfo ?? (() => {});
   const onError = options.onError ?? (() => {});
+  const describe = (result: GenerateRuntimeResult) =>
+    `${result.discovery.operations.length} ops, ${result.discovery.infra.length} infra modules, ${result.discovery.transport.length} transport modules`;
 
-  const paths = resolvePaths(options);
-  let lastFingerprint = await collectWatchFingerprint(paths.srcDir, paths.generatedDir);
   const initial = await generateRuntime(options);
-  onInfo(
-    `[dispatchkit] generated runtime artifacts: ${initial.discovery.operations.length} ops, ${initial.discovery.infra.length} infra modules, ${initial.discovery.transport.length} transport modules`,
-  );
-  onInfo(`[dispatchkit] watching ${initial.srcDir} every ${intervalMs}ms`);
+  onInfo(`[dispatchkit] generated runtime artifacts: ${describe(initial)}`);
+  mkdirSync(initial.srcDir, { recursive: true });
 
-  let isGenerating = false;
-  const timer = setInterval(async () => {
-    if (isGenerating) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let running = false;
+  let pending = false;
+  const regenerate = async (): Promise<void> => {
+    if (running) {
+      pending = true;
       return;
     }
-
-    isGenerating = true;
+    running = true;
     try {
-      const nextFingerprint = await collectWatchFingerprint(initial.srcDir, initial.generatedDir);
-      if (nextFingerprint === lastFingerprint) {
-        return;
-      }
-
       const next = await generateRuntime(options);
-      lastFingerprint = nextFingerprint;
-      onInfo(
-        `[dispatchkit] regenerated runtime artifacts: ${next.discovery.operations.length} ops, ${next.discovery.infra.length} infra modules, ${next.discovery.transport.length} transport modules`,
-      );
+      onInfo(`[dispatchkit] regenerated runtime artifacts: ${describe(next)}`);
     } catch (error) {
       onError(error);
     } finally {
-      isGenerating = false;
+      running = false;
+      if (pending) {
+        pending = false;
+        void regenerate();
+      }
     }
-  }, intervalMs);
+  };
+
+  // Event-based: no polling and no re-hashing of every source file while idle.
+  const watcher = watch(initial.srcDir, { recursive: true }, (_event, fileName) => {
+    // Some platforms omit the file name: regenerate to be safe.
+    if (fileName && !isWatchedChange(initial.srcDir, initial.generatedDir, String(fileName))) {
+      return;
+    }
+    clearTimeout(timer);
+    timer = setTimeout(() => void regenerate(), debounceMs);
+  });
+  watcher.on("error", onError);
+  onInfo(`[dispatchkit] watching ${initial.srcDir} (debounce ${debounceMs}ms)`);
 
   await new Promise<void>((resolve) => {
+    const { signal } = options;
     const stop = () => {
-      clearInterval(timer);
+      clearTimeout(timer);
+      watcher.close();
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
+      signal?.removeEventListener("abort", stop);
       resolve();
     };
-
+    if (signal?.aborted) return stop();
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
+    signal?.addEventListener("abort", stop);
   });
 }

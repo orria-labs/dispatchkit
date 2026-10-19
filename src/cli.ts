@@ -8,13 +8,14 @@ type CliArgs = {
   srcDir?: string;
   generatedDir?: string;
   intervalMs?: number;
+  debounceMs?: number;
 };
 
 function printUsage(): void {
   process.stdout.write(
     [
       "Usage:",
-      "  dispatchkit generate [--watch] [--rootDir <path>] [--srcDir <path>] [--generatedDir <path>] [--intervalMs <ms>]",
+      "  dispatchkit generate [--watch] [--rootDir <path>] [--srcDir <path>] [--generatedDir <path>] [--debounceMs <ms>]",
       "",
       "Examples:",
       "  dispatchkit generate",
@@ -74,6 +75,15 @@ function parseCliArgs(argv: string[]): CliArgs {
       case "--generatedDir":
         parsed.generatedDir = requireOptionValue(args, token);
         break;
+      case "--debounceMs": {
+        const value = Number(requireOptionValue(args, token));
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error("--debounceMs must be a number >= 0");
+        }
+        parsed.debounceMs = Math.floor(value);
+        break;
+      }
+      // Deprecated alias of --debounceMs (watching used to poll).
       case "--intervalMs": {
         const value = Number(requireOptionValue(args, token));
         if (!Number.isFinite(value) || value < 50) {
@@ -108,6 +118,7 @@ async function run(): Promise<void> {
           srcDir: parsed.srcDir,
           generatedDir: parsed.generatedDir,
           intervalMs: parsed.intervalMs,
+          debounceMs: parsed.debounceMs,
           onInfo: (message) => process.stdout.write(`${message}\n`),
           onError: (error) => process.stderr.write(`[dispatchkit] ${renderError(error)}\n`),
         });
