@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseEnv } from "node:util";
+import { parseEnv, types } from "node:util";
 
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
@@ -39,6 +39,7 @@ import type {
 } from "./types.ts";
 import {
   assertStandardSchema,
+  isThenable,
   isTypedSchema,
   runSchema,
   StandardSchemaError,
@@ -91,7 +92,12 @@ type TransportCtxAccessGuard = {
   srcDir: string;
   patterns: string[];
   globs: Bun.Glob[];
-  /** Allow/deny verdict per caller file: glob matching runs once per file. */
+  /**
+   * Allow/deny verdict per caller file, computed once per runtime (guards are per build): a
+   * fresh check costs two `realpath` calls (~20 µs). Within a runtime the code running at a path
+   * is the module loaded at build time, so later on-disk changes do not alter what executes;
+   * a new runtime re-resolves.
+   */
   verdicts: Map<string, boolean>;
 };
 
@@ -122,7 +128,7 @@ type RuntimeGlobalState = {
   transportOriginals: WeakMap<object, object>;
   moduleScopeStorage: typeof moduleScopeStorage;
   transportScopeStorage: typeof transportScopeStorage;
-  physicalPaths: Map<string, string>;
+
   buildContextStorage: typeof buildContextStorage;
   disposedRuntimes: typeof disposedRuntimes;
   activeRuntime: InternalRuntime | undefined;
@@ -142,7 +148,7 @@ function getRuntimeGlobalState(): RuntimeGlobalState {
       transportOriginals: new WeakMap(),
       moduleScopeStorage,
       transportScopeStorage,
-      physicalPaths: new Map(),
+
       buildContextStorage,
       disposedRuntimes,
       activeRuntime: undefined,
@@ -172,20 +178,12 @@ function normalizeSeparators(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
-/** Real path (symlinks resolved), cached: stack-based checks would otherwise hit the fs per call. */
 function resolvePhysicalPath(value: string): string {
-  const cache = runtimeGlobalState.physicalPaths;
-  let physical = cache.get(value);
-  if (physical === undefined) {
-    try {
-      physical = realpathSync(value);
-    } catch {
-      // Not on disk (yet): resolve lexically and retry on the next lookup.
-      return resolve(value);
-    }
-    cache.set(value, physical);
+  try {
+    return realpathSync(value);
+  } catch {
+    return resolve(value);
   }
-  return physical;
 }
 
 const RUNTIME_FILE_PATH = normalizeSeparators(fileURLToPath(import.meta.url));
@@ -687,15 +685,10 @@ const CALLABLE: Record<OperationKind, ReadonlySet<OperationKind>> = {
 
 function createBusMethod(options: {
   operation: LoadedOperation;
-  ctx: InternalModuleCtx;
   getRuntime: () => InternalRuntime;
 }): InternalBusMethod {
-  const { operation, ctx, getRuntime } = options;
+  const { operation, getRuntime } = options;
   const { definition, kind, name } = operation;
-  // Prebuilt once per operation: a bus call is a single ALS run with no per-call allocations
-  // besides the handler context.
-  const scope: ModuleScope = { ctx, kind, name };
-  const handler = definition.handler as (ctx: unknown) => unknown;
   // `typed<T>()` schemas only carry types: skip them at runtime.
   const inputSchema = isTypedSchema(definition.input) ? undefined : definition.input;
   const returnSchema = isTypedSchema(definition.return) ? undefined : definition.return;
@@ -714,17 +707,22 @@ function createBusMethod(options: {
     } catch (cause) {
       fail(cause);
     }
-    return result instanceof Promise ? result.catch(fail) : result;
+    return isThenable(result) ? Promise.resolve(result).catch(fail) : result;
   };
 
   // Validation runs inside the operation scope so validators see the CQRS caller.
-  const runOperation = async (rawInput: unknown, unsafe: boolean): Promise<unknown> => {
+  const runOperation = async (
+    ctx: InternalModuleCtx,
+    rawInput: unknown,
+    unsafe: boolean,
+  ): Promise<unknown> => {
     let input = rawInput;
     if (!unsafe && inputSchema) {
       input = validate(inputSchema, rawInput, "input");
-      if (input instanceof Promise) input = await input;
+      if (isThenable(input)) input = await input;
     }
-    const result = await handler({ ...ctx, input });
+    // Called as a method, as before: handlers may rely on `this` being the definition.
+    const result = await definition.handler({ ...ctx, input });
     return !unsafe && returnSchema ? validate(returnSchema, result, "return") : result;
   };
 
@@ -738,14 +736,29 @@ function createBusMethod(options: {
         ),
       );
     }
-    if (runtimeGlobalState.disposedRuntimes.has(getRuntime())) {
+    const runtime = getRuntime();
+    if (runtimeGlobalState.disposedRuntimes.has(runtime)) {
       return Promise.reject(
         new DispatchkitError(
           "DISPATCHKIT_RUNTIME_DISPOSED: Cannot execute operations after disposal",
         ),
       );
     }
-    return runtimeGlobalState.moduleScopeStorage.run(scope, runOperation, rawInput, unsafe);
+    // A fresh context per call (as in 1.1): handlers may mutate it, and runtime fields may be
+    // reassigned after the build.
+    const ctx: InternalModuleCtx = {
+      config: runtime.config,
+      logger: runtime.logger,
+      infra: runtime.infra,
+      bus: runtime.bus,
+    };
+    return runtimeGlobalState.moduleScopeStorage.run(
+      { ctx, kind, name },
+      runOperation,
+      ctx,
+      rawInput,
+      unsafe,
+    );
   };
 
   const call = ((input: unknown) => execute(input, false)) as InternalBusMethod;
@@ -783,6 +796,8 @@ function findInheritedDescriptor(target: object, key: PropertyKey): PropertyDesc
     current !== null;
     current = Reflect.getPrototypeOf(current)
   ) {
+    // A proxy in the chain may compute values in its `get` trap: use the scoped read instead.
+    if (types.isProxy(current)) return undefined;
     const descriptor = Reflect.getOwnPropertyDescriptor(current, key);
     if (descriptor) return descriptor;
   }
@@ -817,21 +832,19 @@ function wrapTransportWithContext(value: unknown, scope: TransportScope): unknow
       return promise;
     }
 
+    const targetIsProxy = types.isProxy(input);
     const wrapped = new Proxy(input, {
       get(target, key) {
         // Data properties (own or inherited, e.g. class methods) need no context to be read:
         // skip the scope switch and only pay it for accessors, which may run user code.
-        const own = Reflect.getOwnPropertyDescriptor(target, key);
-        if (own) {
-          if ("value" in own) {
+        // Proxies keep the full path: their `get` trap may differ from their descriptors.
+        if (!targetIsProxy) {
+          const own = Reflect.getOwnPropertyDescriptor(target, key);
+          const data = own ?? findInheritedDescriptor(target, key);
+          if (data && "value" in data) {
             // Proxy invariants require the exact value of a frozen own property.
-            if (!own.configurable && !own.writable) return own.value as unknown;
-            return key === "constructor" ? (own.value as unknown) : wrap(own.value);
-          }
-        } else {
-          const inherited = findInheritedDescriptor(target, key);
-          if (inherited && "value" in inherited) {
-            return key === "constructor" ? (inherited.value as unknown) : wrap(inherited.value);
+            if (own && !own.configurable && !own.writable) return own.value as unknown;
+            return key === "constructor" ? (data.value as unknown) : wrap(data.value);
           }
         }
         return run(() => {
@@ -976,7 +989,11 @@ async function loadInfraModules(options: {
       config: options.ctx.config,
       logger: options.ctx.logger,
     };
-    const result = await runtimeGlobalState.moduleScopeStorage.run({ ctx: options.ctx }, () =>
+    // Keep the caller's operation frame: a runtime built inside a query must not let its
+    // infra factories call mutations.
+    const caller = runtimeGlobalState.moduleScopeStorage.getStore();
+    const scope: ModuleScope = { ctx: options.ctx, kind: caller?.kind, name: caller?.name };
+    const result = await runtimeGlobalState.moduleScopeStorage.run(scope, () =>
       Promise.resolve(definition.factory(infraCtx)),
     );
     if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -1069,7 +1086,6 @@ async function loadTransportModules(options: {
 
 function buildBus(
   operations: LoadedOperation[],
-  ctx: InternalModuleCtx,
   getRuntime: () => InternalRuntime,
 ): RuntimeBusBase {
   const bus: RuntimeBusBase = {
@@ -1079,7 +1095,7 @@ function buildBus(
   };
 
   for (const operation of operations) {
-    const method = createBusMethod({ operation, ctx, getRuntime });
+    const method = createBusMethod({ operation, getRuntime });
     const section = bus[operation.kind];
 
     assignBusEntry({
@@ -1322,7 +1338,7 @@ async function buildRuntimeImpl(
       infra: instance.infra,
       bus: instance.bus,
     };
-    instance.bus = buildBus(loadedOperations, moduleCtx, () => instance);
+    instance.bus = buildBus(loadedOperations, () => instance);
     moduleCtx.bus = instance.bus;
     const infraResult = await loadInfraModules({
       srcDir,

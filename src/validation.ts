@@ -30,10 +30,19 @@ export function assertStandardSchema(schema: unknown): asserts schema is Standar
  * bus hot path). Issues become a `StandardSchemaError`; validator exceptions propagate as-is.
  * The schema must already be checked with `assertStandardSchema`.
  */
+/** Promise-like, including promises from other realms (`instanceof Promise` misses those). */
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 export function runSchema(schema: StandardSchemaV1, input: unknown): unknown {
   const result = schema["~standard"].validate(input);
-  if (result instanceof Promise) {
-    return result.then((settled) => {
+  if (isThenable(result)) {
+    return Promise.resolve(result).then((settled) => {
       if (settled.issues) throw new StandardSchemaError(settled.issues);
       return settled.value;
     });

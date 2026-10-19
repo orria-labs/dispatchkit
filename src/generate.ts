@@ -1,4 +1,4 @@
-import { mkdirSync, watch } from "node:fs";
+import { mkdirSync, statSync, watch } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { createModuleClassifier } from "./classify.ts";
@@ -126,8 +126,9 @@ const DECLARATION_FILE = /\.d\.(?:ts|mts|cts)$/;
 
 /**
  * Whether a change under `srcDir` can affect discovery or generated types: any source file
- * (classification follows local imports), plus extensionless paths, which may be directories
- * being renamed or removed. Declarations, dependencies and the artifacts themselves are ignored.
+ * (classification follows local imports), plus directories and vanished paths, which may be
+ * renamed or removed folders (`v1.0/` included). Declarations, dependencies, other files and the
+ * artifacts themselves are ignored.
  */
 function isWatchedChange(srcDir: string, generatedDir: string, fileName: string): boolean {
   const normalized = normalizeSeparators(fileName);
@@ -138,8 +139,15 @@ function isWatchedChange(srcDir: string, generatedDir: string, fileName: string)
   if (fromGenerated !== ".." && !fromGenerated.startsWith("../") && !isAbsolute(fromGenerated)) {
     return false;
   }
+  // Folders leading to the artifacts directory change whenever artifacts are written.
+  const generatedFromSrc = normalizeSeparators(relative(srcDir, generatedDir));
+  if (generatedFromSrc === normalized || generatedFromSrc.startsWith(`${normalized}/`)) {
+    return false;
+  }
   if (DECLARATION_FILE.test(normalized)) return false;
-  return WATCHED_EXTENSION.test(normalized) || !/\.[^/]+$/.test(normalized);
+  if (WATCHED_EXTENSION.test(normalized)) return true;
+  const stats = statSync(join(srcDir, fileName), { throwIfNoEntry: false });
+  return !stats || stats.isDirectory();
 }
 
 export async function generateRuntime(
@@ -183,12 +191,12 @@ export async function watchRuntime(options: WatchRuntimeOptions = {}): Promise<v
   const describe = (result: GenerateRuntimeResult) =>
     `${result.discovery.operations.length} ops, ${result.discovery.infra.length} infra modules, ${result.discovery.transport.length} transport modules`;
 
-  const initial = await generateRuntime(options);
-  onInfo(`[dispatchkit] generated runtime artifacts: ${describe(initial)}`);
-  mkdirSync(initial.srcDir, { recursive: true });
+  const { srcDir, generatedDir } = resolvePaths(options);
+  mkdirSync(srcDir, { recursive: true });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let running = false;
+  // `running` covers the initial generation too: changes made meanwhile set `pending`.
+  let running = true;
   let pending = false;
   const regenerate = async (): Promise<void> => {
     if (running) {
@@ -210,17 +218,32 @@ export async function watchRuntime(options: WatchRuntimeOptions = {}): Promise<v
     }
   };
 
-  // Event-based: no polling and no re-hashing of every source file while idle.
-  const watcher = watch(initial.srcDir, { recursive: true }, (_event, fileName) => {
+  // Event-based: no polling and no re-hashing of every source file while idle. The watcher is
+  // attached before the initial generation so that no change can slip in between.
+  const watcher = watch(srcDir, { recursive: true }, (_event, fileName) => {
     // Some platforms omit the file name: regenerate to be safe.
-    if (fileName && !isWatchedChange(initial.srcDir, initial.generatedDir, String(fileName))) {
+    if (fileName && !isWatchedChange(srcDir, generatedDir, String(fileName))) {
       return;
     }
     clearTimeout(timer);
     timer = setTimeout(() => void regenerate(), debounceMs);
   });
   watcher.on("error", onError);
-  onInfo(`[dispatchkit] watching ${initial.srcDir} (debounce ${debounceMs}ms)`);
+
+  try {
+    const initial = await generateRuntime(options);
+    onInfo(`[dispatchkit] generated runtime artifacts: ${describe(initial)}`);
+  } catch (error) {
+    watcher.close();
+    throw error;
+  } finally {
+    running = false;
+  }
+  if (pending) {
+    pending = false;
+    void regenerate();
+  }
+  onInfo(`[dispatchkit] watching ${srcDir} (debounce ${debounceMs}ms)`);
 
   await new Promise<void>((resolve) => {
     const { signal } = options;
