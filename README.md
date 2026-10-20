@@ -457,12 +457,12 @@ published 1.1.0 in one session (`bun run bench:compare -- --ref v1.1.0`, best of
 
 | Scenario                          |        1.1.0 |        1.2.0 |      Change |
 | --------------------------------- | -----------: | -----------: | ----------: |
-| bus call without schema           |       308 ns |       172 ns |        −44% |
-| bus call with zod / valibot input | 438 / 435 ns | 307 / 296 ns | −30% / −32% |
-| nested bus call (2 levels)        |       617 ns |       345 ns |        −44% |
-| transport method (plain / class)  | 292 / 281 ns | 184 / 200 ns | −37% / −29% |
-| `getTransportCtx()`               |      26.1 µs |       3.4 µs |        −87% |
-| `buildRuntime` (warm)             |      0.33 ms |      0.32 ms |         −1% |
+| bus call without schema           |       289 ns |       146 ns |        −49% |
+| bus call with zod / valibot input | 407 / 405 ns | 290 / 270 ns | −29% / −33% |
+| nested bus call (2 levels)        |       573 ns |       322 ns |        −44% |
+| transport method (plain / class)  | 268 / 264 ns | 170 / 189 ns | −37% / −28% |
+| `getTransportCtx()`               |      20.8 µs |       1.3 µs |        −94% |
+| `buildRuntime` (warm)             |      0.28 ms |      0.17 ms |        −40% |
 
 ## Develop this package
 
