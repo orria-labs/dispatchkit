@@ -244,8 +244,9 @@ function expandTransportCtxAllowPatterns(options: { patterns: string[] }): strin
   return expanded;
 }
 
+/** `physicalSrcDir` resolves the real path of the source dir (once per build, ~13 µs a call). */
 function buildTransportCtxAccessGuard(options: {
-  srcDir: string;
+  physicalSrcDir: () => string;
   patterns: string[];
 }): TransportCtxAccessGuard | undefined {
   const seen = new Set<string>();
@@ -266,7 +267,7 @@ function buildTransportCtxAccessGuard(options: {
   }
 
   return {
-    srcDir: resolvePhysicalPath(options.srcDir),
+    srcDir: options.physicalSrcDir(),
     patterns: normalizedPatterns,
     globs: normalizedPatterns.map((pattern) => new Bun.Glob(pattern)),
     verdicts: new Map(),
@@ -1051,6 +1052,9 @@ async function loadTransportModules(options: {
 }> {
   const transport = Object.create(null) as Record<string, unknown>;
   const allAllowPatterns: string[] = [];
+  // Every guard of this build relates callers to the same physical source dir: resolve it once.
+  let resolvedSrcDir: string | undefined;
+  const physicalSrcDir = (): string => (resolvedSrcDir ??= resolvePhysicalPath(options.srcDir));
 
   for (const module of options.transportModules) {
     const layerDir = module.source === "infra" ? "infra" : "transport";
@@ -1075,7 +1079,7 @@ async function loadTransportModules(options: {
       source: module.source,
     });
     const moduleGuard = buildTransportCtxAccessGuard({
-      srcDir: options.srcDir,
+      physicalSrcDir,
       patterns: [
         ...defaultPatterns,
         ...expandTransportCtxAllowPatterns({ patterns: allowPatterns }),
@@ -1101,7 +1105,7 @@ async function loadTransportModules(options: {
   return {
     transport,
     guard: buildTransportCtxAccessGuard({
-      srcDir: options.srcDir,
+      physicalSrcDir,
       patterns: allAllowPatterns,
     }),
   };
