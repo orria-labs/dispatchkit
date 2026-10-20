@@ -101,13 +101,8 @@ async function scanPattern(cwd: string, pattern: string): Promise<string[]> {
 }
 
 async function discoverModuleOperations(modulesDir: string): Promise<DiscoveredOperation[]> {
-  const [queries, mutations, actions] = await Promise.all([
-    scanPattern(modulesDir, "**/*.query.ts"),
-    scanPattern(modulesDir, "**/*.mutation.ts"),
-    scanPattern(modulesDir, "**/*.action.ts"),
-  ]);
-
-  const files = sortUnique([...queries, ...mutations, ...actions]);
+  // One directory walk for the three kinds: the same files as three separate scans, sorted after.
+  const files = sortUnique(await scanPattern(modulesDir, "**/*.{query,mutation,action}.ts"));
   const operations: DiscoveredOperation[] = [];
   const nameToPath = new Map<string, string>();
 
