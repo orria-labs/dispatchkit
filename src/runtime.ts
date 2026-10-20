@@ -279,17 +279,13 @@ function buildTransportCtxAccessGuard(options: {
  */
 const STACK_LOCATION = /^\s*at (?:.*? \()?((?:file:\/\/|[A-Za-z]:[\\/]|\/).*?)(?::\d+:\d+)?\)?$/;
 
-/**
- * File of the first stack frame outside this module. Parses the default string stack: faster
- * than structured call sites, and independent of custom `Error.prepareStackTrace` formatters.
- * Note: proper tail calls (`return getTransportCtx()`) drop the caller frame in JSC.
- */
-function resolveCallerFilePath(skipper: (...args: never[]) => unknown): string | undefined {
+/** Default string stack of the frames below `skipper`, at most `limit` of them. */
+function captureStack(skipper: (...args: never[]) => unknown, limit: number): string | undefined {
   const stackTraceLimit = Error.stackTraceLimit;
   const prepareStackTrace: unknown = Reflect.get(Error, "prepareStackTrace");
   const holder: { stack?: unknown } = {};
   try {
-    Error.stackTraceLimit = 10;
+    Error.stackTraceLimit = limit;
     Reflect.set(Error, "prepareStackTrace", undefined);
     Error.captureStackTrace(holder, skipper);
   } catch {
@@ -298,15 +294,37 @@ function resolveCallerFilePath(skipper: (...args: never[]) => unknown): string |
     Error.stackTraceLimit = stackTraceLimit;
     Reflect.set(Error, "prepareStackTrace", prepareStackTrace);
   }
-  if (typeof holder.stack !== "string") return undefined;
+  return typeof holder.stack === "string" ? holder.stack : undefined;
+}
 
-  for (const line of holder.stack.split("\n").slice(1)) {
+/** File of the first frame (lines after the message) outside this module. */
+function findCallerFilePath(stack: string | undefined): string | undefined {
+  if (stack === undefined) return undefined;
+  for (let from = stack.indexOf("\n"); from !== -1;) {
+    const to = stack.indexOf("\n", from + 1);
+    const line = to === -1 ? stack.slice(from + 1) : stack.slice(from + 1, to);
     const location = STACK_LOCATION.exec(line)?.[1];
-    if (!location) continue;
-    const filePath = location.startsWith("file://") ? fileURLToPath(location) : location;
-    if (normalizeSeparators(filePath) !== RUNTIME_FILE_PATH) return filePath;
+    if (location) {
+      const filePath = location.startsWith("file://") ? fileURLToPath(location) : location;
+      if (normalizeSeparators(filePath) !== RUNTIME_FILE_PATH) return filePath;
+    }
+    from = to;
   }
   return undefined;
+}
+
+/**
+ * File of the first stack frame outside this module. Parses the default string stack: faster
+ * than structured call sites, and independent of custom `Error.prepareStackTrace` formatters.
+ * Formatting frames is the expensive part (and the limit counts frames below the skipper), so
+ * the caller's frame is captured alone first; a deeper capture, which only appends frames, is
+ * taken when that frame has no usable file (e.g. a frame of this module or of a `node:` module).
+ * Note: proper tail calls (`return getTransportCtx()`) drop the caller frame in JSC.
+ */
+function resolveCallerFilePath(skipper: (...args: never[]) => unknown): string | undefined {
+  return (
+    findCallerFilePath(captureStack(skipper, 1)) ?? findCallerFilePath(captureStack(skipper, 10))
+  );
 }
 
 function isTransportCtxCallAllowed(options: {
@@ -1217,7 +1235,10 @@ export function getTransportCtx(): TransportContext<RuntimeConfigShape, RuntimeB
     !stored && runtimeGlobalState.importScope ? resolveCallerFilePath(getTransportCtx) : undefined;
   const imported = stored ? undefined : getImportScope(callerFilePath);
   const current = stored?.ctx ?? imported?.transport;
-  const pending = runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build;
+  // Only read for the guard and the fallback runtime, neither of which applies to a stored scope.
+  const pending = stored
+    ? undefined
+    : (runtimeGlobalState.buildContextStorage.getStore() ?? imported?.build);
   const guard = stored
     ? stored.guard
     : imported
