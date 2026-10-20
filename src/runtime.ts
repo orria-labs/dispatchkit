@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv, types } from "node:util";
@@ -467,16 +467,14 @@ function extractConfigOverrides(options: BuildRuntimeOptions): Record<string, un
   };
 }
 
-async function readPackageJson(rootDir: string): Promise<Record<string, unknown>> {
-  const path = join(rootDir, "package.json");
-  const file = Bun.file(path);
-
-  if (!(await file.exists())) {
-    return {};
-  }
-
+/**
+ * `{}` when the file is missing, unreadable (e.g. a directory) or not JSON, as before. One sync
+ * read is half the cost of `Bun.file().exists()` + `.json()`; the BOM `.json()` skipped is stripped.
+ */
+function readPackageJson(rootDir: string): Record<string, unknown> {
   try {
-    const data: unknown = await file.json();
+    const text = readFileSync(join(rootDir, "package.json"), "utf8");
+    const data: unknown = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
     return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
   } catch {
     return {};
@@ -1168,10 +1166,8 @@ async function resolveRuntimeConfig(options: {
   envFile: string;
   overrides: Record<string, unknown>;
 }): Promise<RuntimeConfig> {
-  const [packageJson, envFileConfig] = await Promise.all([
-    readPackageJson(options.rootDir),
-    readEnvFile(options.envFile),
-  ]);
+  const packageJson = readPackageJson(options.rootDir);
+  const envFileConfig = await readEnvFile(options.envFile);
   const defaults: RuntimeDefaultConfig = {
     SERVICE_NAME: typeof packageJson.name === "string" ? packageJson.name : "service",
     SERVICE_DESCRIPTION:
