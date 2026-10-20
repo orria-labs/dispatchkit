@@ -726,7 +726,14 @@ function createBusMethod(options: {
       }
     }
     // Called as a method, as before: handlers may rely on `this` being the definition.
-    const result = await definition.handler({ ...ctx, input });
+    // Same keys in the same order as `{ ...ctx, input }`, without the generic spread.
+    const result = await definition.handler({
+      config: ctx.config,
+      logger: ctx.logger,
+      infra: ctx.infra,
+      bus: ctx.bus,
+      input,
+    });
     if (unsafe || !returnSchema) return result;
     try {
       return await validateSchema(returnSchema, result);
