@@ -830,9 +830,18 @@ function wrapTransportWithContext(value: unknown, scope: TransportScope): unknow
     input !== null && (typeof input === "object" || typeof input === "function");
   const unwrap = (input: unknown): unknown =>
     isObject(input) ? (originals.get(input) ?? input) : input;
-  const unwrapArgs = (args: unknown[]): unknown[] =>
-    args.some((arg) => isObject(arg) && originals.has(arg)) ? args.map((arg) => unwrap(arg)) : args;
+  const unwrapArgs = (args: unknown[]): unknown[] => {
+    for (const arg of args) {
+      if (isObject(arg) && originals.has(arg)) return args.map((item) => unwrap(item));
+    }
+    return args;
+  };
   const run = <T>(callback: () => T): T => storage.run(scope, callback);
+  // The hot `apply` trap passes its arguments through `run()` instead of allocating a closure.
+  const applyInScope = (target: object, receiver: unknown, args: unknown[]): unknown =>
+    wrap(
+      Reflect.apply(target as (...args: unknown[]) => unknown, unwrap(receiver), unwrapArgs(args)),
+    );
 
   const wrap = (input: unknown): unknown => {
     if (!isObject(input)) return input;
@@ -890,15 +899,7 @@ function wrapTransportWithContext(value: unknown, scope: TransportScope): unknow
         return run(() => Reflect.set(target, key, unwrap(next), target));
       },
       apply(target, receiver, args) {
-        return run(() =>
-          wrap(
-            Reflect.apply(
-              target as (...args: unknown[]) => unknown,
-              unwrap(receiver),
-              unwrapArgs(args),
-            ),
-          ),
-        );
+        return storage.run(scope, applyInScope, target, receiver, args);
       },
       construct(target, args, newTarget) {
         return run(
